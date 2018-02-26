@@ -8,11 +8,11 @@ with
 		select 		
 			cnct.file_id, 
 			cnct.hotel_id, 
-			to_date(cnct.initial_date, 'YYYYMMDD'), 
-			to_date(cnct.final_date, 'YYYYMMDD'),
+			to_date(cnct.initial_date, 'YYYYMMDD') as initial_date, 
+			to_date(cnct.final_date, 'YYYYMMDD') as final_date,
 			cnct.room_type, cnct.characteristic, 
 			cnct.is_price_per_pax as cnct_is_per_pax,
-		    cnsr.is_per_pax as cncr_is_per_pax, 
+		    cnsr.is_per_pax as cnsr_is_per_pax, 
 			cnct.base_board, cnct.amount as b_price, 
 		    paxes.pax_age,	
 			case
@@ -29,8 +29,8 @@ with
 				when cnsr.is_per_pax = 'Y' and cnsr.is_per_pax = 'N' and cnsr.amount is null 
 					then cnsr.percentage / 100 * cnha.standard_capacity * cnct.amount
 				else 0
-			end as bb_price,
-			cnsr.*
+			end as bb_price
+			--cnsr.*
 			from hbd_dirty_cnct as cnct
 			cross join paxes 
 			inner join hbd_dirty_cnha as cnha on cnha.file_id = cnct.file_id and 
@@ -55,21 +55,30 @@ with
 			cn.final_date, 
 			cn.room_type, 
 			cn.characteristic, 
-			cn.is_price_per_pax as cnct_is_per_pax, 
-		    cn.is_per_pax as cnsr_is_per_pax, 
+			cn.cnct_is_per_pax as cnct_is_per_pax, 
+		    cn.cnsr_is_per_pax as cnsr_is_per_pax, 
 			cn.base_board, 
 			cn.b_price, 
 			cn.bb_price,	
-			cn.pax_age
+			cn.pax_age,
+			cnsu.*
 			from cnsr_add as cn
+			inner join hbd_dirty_ccon as ccon on ccon.file_id = cn.file_id
 			left join hbd_dirty_cnsu as cnsu on
-				cnsu.file_id = cn.file_id and cnha.room_type = cn.room_type and cnha.characteristic = cn.characteristic or
-				cnha.room_type = cn.room_type and cnha.characteristic is null or
-				cnha.room_type is null and cnha.characteristic is null
+				cnsu.file_id = cn.file_id and 
+				ccon.minimum_child_age::int <= cn.pax_age and ccon.maximum_child_age::int >= cn.pax_age and
+				(to_timestamp(cnsu.initial_date, 'YYYYMMDD') < to_timestamp('2018-02-28', 'YYYY-MM-DD')) and 
+				(to_timestamp(cnsu.final_date, 'YYYYMMDD') > to_timestamp('2018-02-28', 'YYYY-MM-DD')) and
+				cnsu.adults	= (select count(pax_age) from paxes where ccon.maximum_child_age::int <= pax_age ) and						
+				cnsu.room_type = cn.room_type and cnsu.characteristic = cn.characteristic and cnsu.board = cn.base_board or
+				cnsu.room_type = cn.room_type and cnsu.characteristic = cn.characteristic and cnsu.board is null or
+				cnsu.room_type = cn.room_type and cnsu.characteristic is null and cnsu.board is null or
+				cnsu.room_type is null and cnsu.characteristic is null and cnsu.board is null or 
+				cnsu.room_type is null and cnsu.characteristic is null and cnsu.board = cn.base_board
 	)
 	
 
-select * from cnsr_add limit 100
+select count(*) from cnsu_n limit 100
 	
 
 
