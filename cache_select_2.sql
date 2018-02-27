@@ -6,7 +6,7 @@ with
 	),
 	-- cross join c ccon чтобы получить данные о группировке pax  в adult, child, infant
 	ccon_pax as (
-		select pax_data.*, ccon.* from hbd_dirty_ccon as ccon cross join pax_data
+		select pax_data.*, ccon.* from hbd_ccon as ccon cross join pax_data
 	),
 	-- для скидок нужно знать номер ребенка, количество взрослых. Нумеруем детей. ccon соответствует отелю и имеет возрастные границы детей.
 	-- для каждой записи ccon нужно определить порядковый номер child 
@@ -37,51 +37,67 @@ with
 	
 	-- считаем базовую цену + базовую цену на завтраки
 	cnsr_add as (
-		select	*	
-			/*cnct.file_id,
+		select		
+			cnct.file_id,
 			cnct.hotel_id,
-			to_date( cnct.initial_date, 'YYYYMMDD' ) as initial_date,
-			to_date( cnct.final_date, 'YYYYMMDD' ) as final_date,
+			ccon.pax_age,
+			to_date( cnct.initial_date::text, 'YYYY-MM-DD' ) as initial_date,
+			to_date( cnct.final_date::text, 'YYYY-MM-DD' ) as final_date,
 			cnct.room_type, cnct.characteristic,
 			cnct.is_price_per_pax as cnct_is_per_pax,
 		    cnsr.is_per_pax as cnsr_is_per_pax,
-			cnct.base_board, cnct.amount as b_price, ccon.pax_age,
+			cnct.base_board,
+											
+			case
+				when cnct.is_price_per_pax = 'N' then cnct.amount
+				else 0
+			end as service_base_price,
 			
 			case
-				when cnsr.is_per_pax = 'Y' and cnsr.percentage is null 
-					then cnsr.amount -- * array_length(array[3,5,30], 1)
-				when cnsr.is_per_pax = 'N' and cnsr.percentage is null 
+				when cnct.is_price_per_pax = 'Y' then cnct.amount/ccon.paxes
+				else 0
+			end as pax_base_price,
+			
+			case
+				when cnsr.is_per_pax = 'N' and cnsr.amount is not null
 					then cnsr.amount
-				when cnsr.is_per_pax = 'Y' and cnsr.is_per_pax = 'Y' and cnsr.amount is null
-					then cnct.amount * cnsr.percentage / 100 -- * array_length(array[3,5,30], 1)
-				when cnsr.is_per_pax = 'N' and cnsr.is_per_pax = 'N' and cnsr.amount is null 
+				when cnct.is_price_per_pax = 'N' and cnsr.is_per_pax = 'N' and cnsr.amount is null 
 					then cnct.amount * cnsr.percentage / 100
-				when cnsr.is_per_pax = 'N' and cnsr.is_per_pax = 'Y' and cnsr.amount is null 
-					then ( cnct.amount / cnha.standard_capacity * cnsr.percentage/100 ) -- * array_length(array[3,5,30], 1)
-				when cnsr.is_per_pax = 'Y' and cnsr.is_per_pax = 'N' and cnsr.amount is null 
+				when cnct.is_price_per_pax = 'Y' and cnsr.is_per_pax = 'N' and cnsr.amount is null
 					then cnsr.percentage / 100 * cnha.standard_capacity * cnct.amount
 				else 0
-			end as bb_price*/
+			end as service_base_board_price,
+			
+			case
+				when cnsr.is_per_pax = 'Y' and cnsr.amount is not null
+					then cnsr.amount
+				when cnct.is_price_per_pax = 'N' and cnsr.is_per_pax = 'Y' and cnsr.amount is null 
+					then  cnsr.percentage / 100 * cnsr.amount/cnha.standard_capacity
+				when cnct.is_price_per_pax = 'Y' and cnsr.is_per_pax = 'Y' and cnsr.amount is null 
+					then  cnsr.percentage / 100 * cnsr.amount/cnha.standard_capacity
+				else 0
+			end as pax_base_board_price
+			
 			--cnsr.*
-			from hbd_dirty_cnct as cnct
+			from hbd_cnct as cnct
 			cross join pax_data -- перемножаем размещения на количество pax
 			inner join ccon on ccon.file_id = cnct.file_id and ccon.pax_id = pax_data.pax_id -- присоединяем данные отелей по pax, получая нужные для подбора скидок параметры
-			inner join hbd_dirty_cnha as cnha on 
+			inner join hbd_cnha as cnha on 
 				cnha.file_id = cnct.file_id and cnha.room_type = cnct.room_type and cnha.characteristic = cnct.characteristic and  -- присоединяем структуру с параметрами размещения, отбрасывая то, что не подходит по парамерам вместимости						
 				cnha.max_pax >= ccon.paxes and cnha.max_children >= ccon.childs 
-			left join hbd_dirty_cnsr as cnsr on  -- присоединяем наценки по завтракам, учитывая параметры поиска
+			left join hbd_cnsr as cnsr on  -- присоединяем наценки по завтракам, учитывая параметры поиска
 				cnsr.file_id = cnct.file_id and 
 				( cnsr.room_type = cnct.room_type or cnsr.room_type is null ) and 
 				( cnsr.characteristic = cnct.characteristic or cnsr.characteristic is null) and
 				cnsr.board_code = cnct.base_board and ( cnsr.min_age is null and cnsr.min_age is null or cnsr.min_age <= ccon.pax_age and cnsr.max_age >= ccon.pax_age ) and
-				to_timestamp( cnsr.initial_date, 'YYYYMMDD' ) < to_timestamp( '2018-02-28', 'YYYY-MM-DD' )  and 
-				to_timestamp( cnsr.final_date, 'YYYYMMDD' ) > to_timestamp( '2018-03-10', 'YYYY-MM-DD' )				
-			where ( to_timestamp( cnct.initial_date, 'YYYYMMDD' ) < to_timestamp( '2018-02-28', 'YYYY-MM-DD' ) and 
-				to_timestamp( cnct.final_date, 'YYYYMMDD' ) > to_timestamp( '2018-03-10', 'YYYY-MM-DD' ) )
+				to_timestamp( cnsr.initial_date::text, 'YYYY-MM-DD' ) < to_timestamp( '2018-02-28', 'YYYY-MM-DD' )  and 
+				to_timestamp( cnsr.final_date::text, 'YYYY-MM-DD' ) > to_timestamp( '2018-03-10', 'YYYY-MM-DD' )				
+			where ( to_timestamp( cnct.initial_date::text, 'YYYY-MM-DD' ) < to_timestamp( '2018-02-28', 'YYYY-MM-DD' ) and 
+				to_timestamp( cnct.final_date::text, 'YYYY-MM-DD' ) > to_timestamp( '2018-03-10', 'YYYY-MM-DD' ) )
 	
 	)
 	
-	select count(*) from cnsr_add limit 100;
+	select * from cnsr_add limit 100;
 	
 	
 	
@@ -137,8 +153,8 @@ with
 			cn.pax_age,
 			cnsu.*
 			from cnsr_add as cn
-			inner join hbd_dirty_ccon as ccon on ccon.file_id = cn.file_id
-			left join hbd_dirty_cnsu as cnsu on
+			inner join hbd_ccon as ccon on ccon.file_id = cn.file_id
+			left join hbd_cnsu as cnsu on
 				cnsu.file_id = cn.file_id and cnsu.type = 'N' and
 				ccon.minimum_child_age::int <= cn.pax_age and ccon.maximum_child_age::int >= cn.pax_age and
 				( to_timestamp(cnsu.initial_date, 'YYYYMMDD' ) < to_timestamp( '2018-02-28', 'YYYY-MM-DD' ) ) and
