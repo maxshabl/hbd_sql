@@ -1,0 +1,37 @@
+with 
+	-- помещаем pax в таблицу
+	pax_data as ( 
+		select row_number() OVER ( ORDER BY pax_age desc ) as pax_id, pax_age from unnest ( array[1,5,30,30] ) as pax_age order by pax_age desc 
+	),
+	-- cross join c ccon чтобы получить данные о группировке pax  в adult, child, infant
+	ccon_pax as (
+		select pax_data.*, ccon.* from hbd_dirty_ccon as ccon cross join pax_data
+	),
+	-- для скидок нужно знать номер ребенка, количество взрослых. Нумеруем детей. ccon соответствует отелю и имеет возрастные границы детей.
+	-- для каждой записи ccon нужно определить порядковый номер child 
+	ccon_child as ( 
+		select 
+			row_number() over ( partition by ccon.file_id order by ccon.pax_age ) as child_id,
+			ccon.file_id,
+			ccon.pax_id
+			from ccon_pax as ccon 
+			where ccon.minimum_child_age::int <= pax_age and pax_age <= ccon.maximum_child_age::int --and ccon.file_id = '102_162171_M_F'
+			order by file_id
+	),	
+	-- соединяем с ccon_pax получая ccon, умноженный на количество pax с pax_id, добавляя child_id + считаем adult
+	ccon as (
+		select
+			 count( pax.pax_id ) over ( partition by pax.file_id ) as paxes,
+			( count( pax.pax_id ) over ( partition by pax.file_id )) -
+			( count( child.child_id ) over ( partition by pax.file_id )) as adults,
+			( count( child.child_id ) over ( partition by pax.file_id )) as childs,
+			child.child_id,
+			pax.file_id,
+			pax.pax_id, 
+			pax.pax_age 
+			from ccon_pax pax 
+			left join ccon_child child 
+			on pax.file_id = child.file_id and pax.pax_id = child.pax_id
+	)
+	
+	select * from ccon order by file_id
