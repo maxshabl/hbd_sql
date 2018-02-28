@@ -2,7 +2,9 @@
 with 
 	-- помещаем pax в таблицу
 	pax_data as ( 
-		select row_number() OVER ( ORDER BY pax_age desc ) as pax_id, pax_age from unnest ( array[1,5,30,30] ) as pax_age order by pax_age desc 
+		select row_number() OVER ( ORDER BY pax_age desc ) as pax_id, pax_age, 
+			(to_date( '2018-03-10', 'YYYY-MM-DD' ) - to_date( '2018-02-28', 'YYYY-MM-DD' )) as rest_days
+			from unnest ( array[1,5,30,30] ) as pax_age order by pax_age desc 
 	),
 	-- cross join c ccon чтобы получить данные о группировке pax  в adult, child, infant
 	ccon_pax as (
@@ -42,8 +44,8 @@ with
 			pax.pax_id,
 			child.child_id,
 			infant.infant_id,			 
-			pax.pax_age 
-			from ccon_pax pax 
+			pax.pax_age  
+			from ccon_pax as pax 
 			left join ccon_child child 
 			on pax.file_id = child.file_id and pax.pax_id = child.pax_id											 
 			left join ccon_infant infant 
@@ -57,6 +59,8 @@ with
 	inc_cnsr as (
 		select
 			ccon.*,
+			cnha.max_pax,
+			cnha.standard_capacity,
 			cnct.hotel_id,			
 			cnct.initial_date,
 			cnct.final_date,
@@ -107,8 +111,8 @@ with
 				( cnsr.room_type = cnct.room_type or cnsr.room_type is null ) and 
 				( cnsr.characteristic = cnct.characteristic or cnsr.characteristic is null) and
 				cnsr.board_code = cnct.base_board and ( cnsr.min_age is null and cnsr.min_age is null or cnsr.min_age <= ccon.pax_age and cnsr.max_age >= ccon.pax_age ) and
-				cnsr.initial_date::timestamp < to_timestamp( '2018-02-28', 'YYYY-MM-DD' )  and 
-				cnsr.final_date::timestamp > to_timestamp( '2018-03-10', 'YYYY-MM-DD' )				
+				cnsr.initial_date::timestamp < to_timestamp( '2018-02-28', 'YYYY-MM-DD' )  /*and 
+				cnsr.final_date::timestamp > to_timestamp( '2018-03-10', 'YYYY-MM-DD' )	*/			
 			where ( cnct.initial_date::timestamp < to_timestamp( '2018-02-28', 'YYYY-MM-DD' ) and 
 				cnct.final_date::timestamp > to_timestamp( '2018-03-10', 'YYYY-MM-DD' ) )
 			--group by cnct.file_id, cnct.room_type, cnct.characteristic
@@ -116,24 +120,29 @@ with
 	
 	-- считаем наценки и скидки на детей и инфантов. Предполагается, что замножений быть не должно. Каждый pax получит не более одной скидки
 	inc_cnsu_n as (
-		select 
-			cn.* 
+		select
+			cn.cnsr_is_per_pax,
+			cnsu.*
+			/*case
+				when cnsu.application_type = 'B' and 
+					then  
+			end*/
 		from inc_cnsr cn
 		left join hbd_cnsu cnsu on cnsu.file_id = cn.file_id and
 		( cnsu.room_type = cn.room_type or cnsu.room_type is null ) and ( cnsu.characteristic = cn.characteristic or cnsu.characteristic is null  ) and
 		( cnsu.board = cn.base_board  or cnsu.board is null ) and 
 		cnsu.initial_date::timestamp < to_timestamp( '2018-02-28', 'YYYY-MM-DD' ) and 
 		cnsu.final_date::timestamp > to_timestamp( '2018-03-10', 'YYYY-MM-DD' ) and
-		(cnsu.application_initial_date::timestamp < now() or cnsu.application_initial_date is null) and (cnsu.application_final_date::timestamp > now() or cnsu.application_initial_date is null) and
-		cnsu.adults <= cn.adults and (cnsu.pax_order = cn.child_id and cnsu.min_age <= cn.pax_age and cnsu.max_age >= cn.pax_age and cnsu.type = 'N') 
+		( cnsu.application_initial_date::timestamp < now() or cnsu.application_initial_date is null ) and ( cnsu.application_final_date::timestamp > now() or cnsu.application_initial_date is null ) and
+		cnsu.adults <= cn.adults and ( cnsu.pax_order = cn.child_id and cnsu.min_age <= cn.pax_age and cnsu.max_age >= cn.pax_age and cnsu.type = 'N' ) 
 									
 		
 	)
 	
 	
-	
+	--select * from pax_data;
 	--select count(*) from inc_cnsr limit 100
-	select count(*) from inc_cnsu_n limit 100;
+	select * from inc_cnsu_n where cnsr_is_per_pax is null and type = 'N' and application_type = 'B' and amount is not null limit 100;
 	--select * from cnsr_add limit 100
 	
 	
