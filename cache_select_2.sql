@@ -18,46 +18,63 @@ with
 			from ccon_pax as ccon 
 			where ccon.minimum_child_age::int <= pax_age and pax_age <= ccon.maximum_child_age::int --and ccon.file_id = '102_162171_M_F'
 			order by file_id
-	),	
+	),
+	
+	ccon_infant as ( 
+		select 
+			row_number() over ( partition by ccon.file_id order by ccon.pax_age ) as infant_id,
+			ccon.file_id,
+			ccon.pax_id
+			from ccon_pax as ccon 
+			where ccon.minimum_child_age::int > pax_age  --and ccon.file_id = '102_162171_M_F'
+			order by file_id
+	),
 	-- соединяем с ccon_pax получая ccon, умноженный на количество pax с pax_id, добавляя child_id + считаем adult
 	ccon as (
 		select
+			pax.file_id,
 			 count( pax.pax_id ) over ( partition by pax.file_id ) as paxes,
 			( count( pax.pax_id ) over ( partition by pax.file_id )) -
-			( count( child.child_id ) over ( partition by pax.file_id )) as adults,
-			( count( child.child_id ) over ( partition by pax.file_id )) as childs,
+			( ( count( child.child_id ) over ( partition by pax.file_id ) ) +
+			( count( infant.infant_id ) over ( partition by pax.file_id ) ) ) as adults,
+			( count( child.child_id ) over ( partition by pax.file_id ) ) as childs,
+			( count( infant.infant_id ) over ( partition by pax.file_id ) ) as infants,			
+			pax.pax_id,
 			child.child_id,
-			pax.file_id,
-			pax.pax_id, 
+			infant.infant_id,			 
 			pax.pax_age 
 			from ccon_pax pax 
 			left join ccon_child child 
-			on pax.file_id = child.file_id and pax.pax_id = child.pax_id
+			on pax.file_id = child.file_id and pax.pax_id = child.pax_id											 
+			left join ccon_infant infant 
+			on pax.file_id = infant.file_id and pax.pax_id = child.pax_id
 	),
 	
-	-- считаем базовую цену + базовую цену на завтраки
-	cnsr_add as (
-		select		
-			cnct.file_id,
-			cnct.hotel_id,
-			ccon.pax_age,
-			to_date( cnct.initial_date::text, 'YYYY-MM-DD' ) as initial_date,
-			to_date( cnct.final_date::text, 'YYYY-MM-DD' ) as final_date,
+	-- группируем для теста, чтоб легче было искать перемножения
+	
+	-- считаем базовую цену + базовую цену на завтраки Предполагается, что записи в таблице cnct , будут помнрожены на число pax -ов в номере
+	-- сами наценки на завтрак замножить ничего не должны
+	inc_cnsr as (
+		select
+			ccon.*,
+			cnct.hotel_id,			
+			cnct.initial_date,
+			cnct.final_date,
 			cnct.room_type, cnct.characteristic,
 			cnct.is_price_per_pax as cnct_is_per_pax,
 		    cnsr.is_per_pax as cnsr_is_per_pax,
 			cnct.base_board,
-											
+			-- получаем цену за номер как за сервис							
 			case
 				when cnct.is_price_per_pax = 'N' then cnct.amount
 				else 0
 			end as service_base_price,
-			
+			-- получаем цену за номер для человека, т е его долю в общей сумме
 			case
 				when cnct.is_price_per_pax = 'Y' then cnct.amount/ccon.paxes
 				else 0
 			end as pax_base_price,
-			
+			-- получаем цену за питание как за сервис
 			case
 				when cnsr.is_per_pax = 'N' and cnsr.amount is not null
 					then cnsr.amount
@@ -67,7 +84,7 @@ with
 					then cnsr.percentage / 100 * cnha.standard_capacity * cnct.amount
 				else 0
 			end as service_base_board_price,
-			
+			-- получаем цену за питание для данного человека
 			case
 				when cnsr.is_per_pax = 'Y' and cnsr.amount is not null
 					then cnsr.amount
@@ -90,14 +107,34 @@ with
 				( cnsr.room_type = cnct.room_type or cnsr.room_type is null ) and 
 				( cnsr.characteristic = cnct.characteristic or cnsr.characteristic is null) and
 				cnsr.board_code = cnct.base_board and ( cnsr.min_age is null and cnsr.min_age is null or cnsr.min_age <= ccon.pax_age and cnsr.max_age >= ccon.pax_age ) and
-				to_timestamp( cnsr.initial_date::text, 'YYYY-MM-DD' ) < to_timestamp( '2018-02-28', 'YYYY-MM-DD' )  and 
-				to_timestamp( cnsr.final_date::text, 'YYYY-MM-DD' ) > to_timestamp( '2018-03-10', 'YYYY-MM-DD' )				
-			where ( to_timestamp( cnct.initial_date::text, 'YYYY-MM-DD' ) < to_timestamp( '2018-02-28', 'YYYY-MM-DD' ) and 
-				to_timestamp( cnct.final_date::text, 'YYYY-MM-DD' ) > to_timestamp( '2018-03-10', 'YYYY-MM-DD' ) )
+				cnsr.initial_date::timestamp < to_timestamp( '2018-02-28', 'YYYY-MM-DD' )  and 
+				cnsr.final_date::timestamp > to_timestamp( '2018-03-10', 'YYYY-MM-DD' )				
+			where ( cnct.initial_date::timestamp < to_timestamp( '2018-02-28', 'YYYY-MM-DD' ) and 
+				cnct.final_date::timestamp > to_timestamp( '2018-03-10', 'YYYY-MM-DD' ) )
+			--group by cnct.file_id, cnct.room_type, cnct.characteristic
+	),
 	
+	-- считаем наценки и скидки на детей и инфантов. Предполагается, что замножений быть не должно. Каждый pax получит не более одной скидки
+	inc_cnsu_n as (
+		select 
+			cn.* 
+		from inc_cnsr cn
+		left join hbd_cnsu cnsu on cnsu.file_id = cn.file_id and
+		( cnsu.room_type = cn.room_type or cnsu.room_type is null ) and ( cnsu.characteristic = cn.characteristic or cnsu.characteristic is null  ) and
+		( cnsu.board = cn.base_board  or cnsu.board is null ) and 
+		cnsu.initial_date::timestamp < to_timestamp( '2018-02-28', 'YYYY-MM-DD' ) and 
+		cnsu.final_date::timestamp > to_timestamp( '2018-03-10', 'YYYY-MM-DD' ) and
+		(cnsu.application_initial_date::timestamp < now() or cnsu.application_initial_date is null) and (cnsu.application_final_date::timestamp > now() or cnsu.application_initial_date is null) and
+		cnsu.adults <= cn.adults and (cnsu.pax_order = cn.child_id and cnsu.min_age <= cn.pax_age and cnsu.max_age >= cn.pax_age and cnsu.type = 'N') 
+									
+		
 	)
 	
-	select * from cnsr_add limit 100;
+	
+	
+	--select count(*) from inc_cnsr limit 100
+	select count(*) from inc_cnsu_n limit 100;
+	--select * from cnsr_add limit 100
 	
 	
 	
