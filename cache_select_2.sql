@@ -54,15 +54,15 @@ with
 			on pax.file_id = infant.file_id and pax.pax_id = child.pax_id
 	),
 	
-	-- группируем для теста, чтоб легче было искать перемножения
+	
 	
 	-- считаем базовую цену + базовую цену на завтраки Предполагается, что записи в таблице cnct , будут помнрожены на число pax -ов в номере
 	-- сами наценки на завтрак замножить ничего не должны
 	inc_cnsr as (
 		select
 			ccon.*,
-			cnha.max_pax,
 			cnha.standard_capacity,
+			cnha.max_pax,			
 			cnct.hotel_id,			
 			cnct.initial_date,
 			cnct.final_date,
@@ -70,6 +70,7 @@ with
 			cnct.is_price_per_pax as cnct_is_per_pax,
 		    cnsr.is_per_pax as cnsr_is_per_pax,
 			cnct.base_board,
+			cnct.amount,
 			-- получаем цену за номер как за сервис							
 			case
 				when cnct.is_price_per_pax = 'N' then cnct.amount * ccon.rest_days
@@ -124,42 +125,49 @@ with
 	inc_cnsu_n as (
 		select			
 			cn.*,
-			cnsu.*,
+			--cnsu.*,
 			case
 				-- рассчитываем скидку B - к базовой цене с amount
 				when cnsu.application_type = 'B' and cn.cnct_is_per_pax = 'Y'  and
 					cnsu.amount is not null and ( cn.cnsr_is_per_pax = 'N' or cn.cnsr_is_per_pax is null ) 
-					then cn.pax_base_price + cnsu.amount / cn.paxes + COALESCE(cn.pax_base_board_price, 0) / cn.paxes 
+					then cn.pax_base_price + cnsu.amount / cn.paxes + COALESCE( cn.pax_base_board_price, 0 ) / cn.paxes 
 											
 				when cnsu.application_type = 'B' and cn.cnct_is_per_pax = 'Y'  and
 					cnsu.amount is not null and ( cn.cnsr_is_per_pax = 'Y'  or cn.cnsr_is_per_pax is null )
-					then cn.pax_base_price + cnsu.amount / cn.paxes + COALESCE(cn.pax_base_board_price, 0)
+					then cn.pax_base_price + cnsu.amount / cn.paxes + COALESCE( cn.pax_base_board_price, 0 )
 											
 				when cnsu.application_type = 'B' and cn.cnct_is_per_pax = 'N' and
 					cnsu.amount is not null and ( cn.cnsr_is_per_pax = 'N'  or cn.cnsr_is_per_pax is null )
-					then cn.service_base_price / cn.standard_capacity + cnsu.amount / cn.paxes + COALESCE(cn.service_base_board_price, 0) / cn.paxes
+					then cn.service_base_price / cn.standard_capacity + cnsu.amount / cn.paxes + 
+						COALESCE( cn.service_base_board_price, 0 ) / cn.paxes
 											
 				when cnsu.application_type = 'B' and cn.cnct_is_per_pax = 'N'  and
 					cnsu.amount is not null and ( cn.cnsr_is_per_pax = 'Y' or cn.cnsr_is_per_pax is null )
-					then cn.service_base_price / cn.standard_capacity + cnsu.amount / cn.paxes + COALESCE(cn.pax_base_board_price, 0) 
+					then cn.service_base_price / cn.standard_capacity + cnsu.amount / cn.paxes + 
+						COALESCE( cn.pax_base_board_price, 0 ) 
 											
 				-- рассчитываем скидку B - к базовой цене с percentage, где amount is null
 				when cnsu.application_type = 'B' and cn.cnct_is_per_pax = 'Y' and cnsu.amount is  null  and
 					( cn.cnsr_is_per_pax = 'N'  or cn.cnsr_is_per_pax is null )
-					then ( cn.pax_base_price + cn.pax_base_price * cnsu.percentage / 100 ) + ( COALESCE(cn.service_base_board_price, 0) / cn.paxes ) 
+					then ( cn.pax_base_price + cn.pax_base_price * cnsu.percentage / 100 ) + 
+						( COALESCE( cn.service_base_board_price, 0 ) / cn.paxes ) 
 											
 				when cnsu.application_type = 'B' and cn.cnct_is_per_pax = 'Y' and cnsu.amount is  null and 
 					( cn.cnsr_is_per_pax = 'Y'  or cn.cnsr_is_per_pax is null ) 
-					then ( cn.pax_base_price + cn.pax_base_price * cnsu.percentage / 100 ) + COALESCE(cn.service_base_board_price, 0) 
+					then ( cn.pax_base_price + cn.pax_base_price * cnsu.percentage / 100 ) + 
+						COALESCE( cn.service_base_board_price, 0 ) 
 											
 				when cnsu.application_type = 'B' and cn.cnct_is_per_pax = 'N' and cnsu.amount is  null and 
 					( cn.cnsr_is_per_pax = 'N'  or cn.cnsr_is_per_pax is null ) 
-					then cn.service_base_price / cn.standard_capacity + cn.service_base_price / cn.standard_capacity * cnsu.percentage / 100 + 
-						COALESCE(cn.service_base_board_price, 0) / cn.paxes 
+					then cn.service_base_price / cn.standard_capacity + 
+						cn.service_base_board_price / cn.standard_capacity * cnsu.percentage / 100 + 
+						COALESCE( cn.service_base_board_price, 0 ) / cn.paxes 
 											
 				when cnsu.application_type = 'B' and cn.cnct_is_per_pax = 'N' and cnsu.amount is  null  and
 					( cn.cnsr_is_per_pax = 'Y'  or cn.cnsr_is_per_pax is null)  
-					then cn.service_base_price / cn.standard_capacity + cnsu.amount / cn.paxes + COALESCE(cn.pax_base_board_price, 0)
+					then cn.service_base_price / cn.standard_capacity + 
+						cn.service_base_price / cn.standard_capacity * cnsu.percentage / 100 + 
+						COALESCE( cn.pax_base_board_price, 0 )
 											
 				else 0
 			end as b_discount,
@@ -168,42 +176,42 @@ with
 			case
 				-- рассчитываем наценку R - к базовой цене с amount
 				when cnsu.application_type = 'R' and cn.cnct_is_per_pax = 'Y'  and
-					cnsu.amount is not null and cn.cnsr_is_per_pax = 'N' or cn.cnsr_is_per_pax is null 
+					cnsu.amount is not null and ( cn.cnsr_is_per_pax = 'N' or cn.cnsr_is_per_pax is null ) 
 					then cn.pax_base_price + ( COALESCE(cn.service_base_board_price, 0) / cn.paxes + cnsu.amount / cn.paxes ) 
 											
 				when cnsu.application_type = 'R' and cn.cnct_is_per_pax = 'Y'  and
-					cnsu.amount is not null and cn.cnsr_is_per_pax = 'Y'  or cn.cnsr_is_per_pax is null
+					cnsu.amount is not null and ( cn.cnsr_is_per_pax = 'Y'  or cn.cnsr_is_per_pax is null )
 					then cn.pax_base_price + ( COALESCE(cn.pax_base_board_price, 0) + cnsu.amount / cn.paxes )
 											
 				when cnsu.application_type = 'R' and cn.cnct_is_per_pax = 'N' and
-					cnsu.amount is not null and cn.cnsr_is_per_pax = 'N'  or cn.cnsr_is_per_pax is null
+					cnsu.amount is not null and ( cn.cnsr_is_per_pax = 'N'  or cn.cnsr_is_per_pax is null ) 
 					then cn.service_base_price / cn.standard_capacity + COALESCE(cn.service_base_board_price, 0) / cn.paxes +
-						cnsu.amount / cn.paxes 
+						cnsu.amount / cn.paxes
 						
 											
 				when cnsu.application_type = 'R' and cn.cnct_is_per_pax = 'N'  and
-					cnsu.amount is not null and cn.cnsr_is_per_pax = 'Y' or cn.cnsr_is_per_pax is null
-					then cn.service_base_price / cn.standard_capacity + COALESCE(cn.pax_base_board_price, 0) / cn.paxes +
+					cnsu.amount is not null and ( cn.cnsr_is_per_pax = 'Y' or cn.cnsr_is_per_pax is null )
+					then cn.service_base_price / cn.standard_capacity + COALESCE( cn.pax_base_board_price, 0 ) / cn.paxes +
 						cnsu.amount
 											
 				-- рассчитываем наценку R - завтрак с percentage, где amount is null
 				when cnsu.application_type = 'R' and cn.cnct_is_per_pax = 'Y' and cnsu.amount is  null  and
-					 cn.cnsr_is_per_pax = 'N'  or cn.cnsr_is_per_pax is null
-					then cn.pax_base_price + ( COALESCE(cn.service_base_board_price, 0) / cn.paxes + 
-						COALESCE(cn.service_base_board_price, 0) / cn.paxes * cnsu.percentage / 100) 
+					( cn.cnsr_is_per_pax = 'N'  or cn.cnsr_is_per_pax is null )
+					then cn.pax_base_price + ( COALESCE( cn.service_base_board_price, 0) / cn.paxes + 
+						COALESCE( cn.service_base_board_price, 0 ) / cn.paxes * cnsu.percentage / 100 ) 
 											
-				when cnsu.application_type = 'R' and cn.cnct_is_per_pax = 'Y' and cnsu.amount is  null  
-					and cn.cnsr_is_per_pax = 'Y'  or cn.cnsr_is_per_pax is null 
-					then cn.pax_base_price + ( COALESCE(cn.pax_base_board_price, 0) + 
-						COALESCE(cn.pax_base_board_price, 0) * cnsu.percentage / 100) 
+				when cnsu.application_type = 'R' and cn.cnct_is_per_pax = 'Y' and cnsu.amount is  null and 
+					( cn.cnsr_is_per_pax = 'Y'  or cn.cnsr_is_per_pax is null )
+					then cn.pax_base_price + ( COALESCE( cn.pax_base_board_price, 0 ) + 
+						COALESCE(cn.pax_base_board_price, 0) * cnsu.percentage / 100 ) 
 											
-				when cnsu.application_type = 'R' and cn.cnct_is_per_pax = 'N' and cnsu.amount is  null 
-					and cn.cnsr_is_per_pax = 'N'  or cn.cnsr_is_per_pax is null 
+				when cnsu.application_type = 'R' and cn.cnct_is_per_pax = 'N' and cnsu.amount is  null 	and 
+					( cn.cnsr_is_per_pax = 'N'  or cn.cnsr_is_per_pax is null )
 					then cn.service_base_price / cn.standard_capacity + ( COALESCE(cn.service_base_board_price, 0) / cn.paxes +
 						cnsu.percentage / 100 * COALESCE(cn.service_base_board_price, 0) / cn.paxes )  
 											
 				when cnsu.application_type = 'R' and cn.cnct_is_per_pax = 'N' and cnsu.amount is  null  and
-					cn.cnsr_is_per_pax = 'Y'  or cn.cnsr_is_per_pax is null 
+					( cn.cnsr_is_per_pax = 'Y'  or cn.cnsr_is_per_pax is null )
 					then cn.service_base_price / cn.standard_capacity + ( COALESCE(cn.pax_base_board_price, 0) +
 						cnsu.percentage / 100 * COALESCE(cn.pax_base_board_price, 0) )											
 				else 0
@@ -211,43 +219,59 @@ with
 			
 			
 			case
-				-- рассчитываем скидку N с amount
-				when cnsu.application_type = 'N' and cn.cnct_is_per_pax = 'Y'  and
-					cnsu.amount is not null and cn.cnsr_is_per_pax = 'N' or cn.cnsr_is_per_pax is null 
-					then cn.pax_base_price + cnsu.amount / cn.paxes + COALESCE(cn.pax_base_board_price, 0) / cn.paxes 
+				-- рассчитываем скидки N , T, U, с amount
+				when cnsu.application_type in ( 'N', 'T', 'U' ) and cn.cnct_is_per_pax = 'Y'  and
+					cnsu.amount is not null and ( cn.cnsr_is_per_pax = 'N' or cn.cnsr_is_per_pax is null )  
+					then ( cn.pax_base_price + cnsu.amount / cn.paxes ) + COALESCE( cn.service_base_board_price, 0 )  / cn.paxes 
 											
-				when cnsu.application_type = 'N' and cn.cnct_is_per_pax = 'Y'  and
-					cnsu.amount is not null and cn.cnsr_is_per_pax = 'Y'  or cn.cnsr_is_per_pax is null
-					then cn.pax_base_price + cnsu.amount / cn.paxes + COALESCE(cn.pax_base_board_price, 0) 
+				when cnsu.application_type in ( 'N', 'T', 'U' ) and cn.cnct_is_per_pax = 'Y'  and
+					cnsu.amount is not null and ( cn.cnsr_is_per_pax = 'Y'  or cn.cnsr_is_per_pax is null )
+					then ( cn.pax_base_price + cnsu.amount / cn.paxes ) + COALESCE( cn.pax_base_board_price, 0 ) 
 											
-				when cnsu.application_type = 'N' and cn.cnct_is_per_pax = 'N' and
-					cnsu.amount is not null and cn.cnsr_is_per_pax = 'N'  or cn.cnsr_is_per_pax is null
-					then cn.service_base_price / cn.standard_capacity + cnsu.amount / cn.paxes + COALESCE(cn.service_base_board_price, 0) / cn.paxes
+				when cnsu.application_type in ( 'N', 'T', 'U' ) and cn.cnct_is_per_pax = 'N' and
+					cnsu.amount is not null and ( cn.cnsr_is_per_pax = 'N'  or cn.cnsr_is_per_pax is null )
+					then cn.service_base_price / cn.standard_capacity + cnsu.amount / cn.paxes + 
+						COALESCE( cn.service_base_board_price, 0 ) / cn.paxes
 											
-				when cnsu.application_type = 'N' and cn.cnct_is_per_pax = 'N'  and
-					cnsu.amount is not null and cn.cnsr_is_per_pax = 'Y' or cn.cnsr_is_per_pax is null
-					then cn.service_base_price / cn.standard_capacity + cnsu.amount / cn.paxes + COALESCE(cn.pax_base_board_price, 0) 
+				when cnsu.application_type in ( 'N', 'T', 'U' ) and cn.cnct_is_per_pax = 'N'  and
+					cnsu.amount is not null and ( cn.cnsr_is_per_pax = 'Y' or cn.cnsr_is_per_pax is null )
+					then cn.service_base_price / cn.standard_capacity + cnsu.amount / cn.paxes + 
+						COALESCE( cn.pax_base_board_price, 0 ) 
 											
-				-- рассчитываем скидку N, где amount is null
-				when cnsu.application_type = 'N' and cn.cnct_is_per_pax = 'Y' and cnsu.amount is  null  and
-					 cn.cnsr_is_per_pax = 'N'  or cn.cnsr_is_per_pax is null
-					then ( cn.pax_base_price + cn.pax_base_price * cnsu.percentage / 100 ) + ( COALESCE(cn.service_base_board_price, 0) / cn.paxes ) 
+				-- рассчитываем скидки N , T, U, где amount is null
+				when cnsu.application_type in ( 'N', 'T', 'U' ) and cn.cnct_is_per_pax = 'Y' and cnsu.amount is  null  and
+					( cn.cnsr_is_per_pax = 'N'  or cn.cnsr_is_per_pax is null )
+					then ( cn.pax_base_price + cn.pax_base_price * cnsu.percentage / 100 ) + 
+						( COALESCE(cn.service_base_board_price, 0 ) / cn.paxes + 
+						COALESCE(cn.service_base_board_price, 0 ) / cn.paxes * cnsu.percentage / 100) 
 											
-				when cnsu.application_type = 'N' and cn.cnct_is_per_pax = 'Y' and cnsu.amount is  null  
-					and cn.cnsr_is_per_pax = 'Y'  or cn.cnsr_is_per_pax is null 
-					then ( cn.pax_base_price + cn.pax_base_price * cnsu.percentage / 100 ) + COALESCE(cn.service_base_board_price, 0)
+				when cnsu.application_type in ( 'N', 'T', 'U' ) and cn.cnct_is_per_pax = 'Y' and cnsu.amount is  null and 
+					( cn.cnsr_is_per_pax = 'Y'  or cn.cnsr_is_per_pax is null )
+					then ( cn.pax_base_price + cn.pax_base_price * cnsu.percentage / 100 ) + 
+						( COALESCE( cn.pax_base_board_price, 0 ) * cnsu.percentage / 100 )
 											
-				when cnsu.application_type = 'N' and cn.cnct_is_per_pax = 'N' and cnsu.amount is  null 
-					and cn.cnsr_is_per_pax = 'N'  or cn.cnsr_is_per_pax is null 
-					then cn.service_base_price / cn.standard_capacity + cn.service_base_price / cn.standard_capacity * cnsu.percentage / 100 + 
-						COALESCE(cn.service_base_board_price, 0) / cn.paxes 
+				when cnsu.application_type in ( 'N', 'T', 'U' ) and cn.cnct_is_per_pax = 'N' and cnsu.amount is  null and 
+					( cn.cnsr_is_per_pax = 'N'  or cn.cnsr_is_per_pax is null )
+					then ( cn.service_base_price / cn.standard_capacity + 
+						cn.service_base_price / cn.standard_capacity * cnsu.percentage / 100 ) + 
+						( COALESCE(cn.service_base_board_price, 0) / cn.paxes + 
+						COALESCE(cn.service_base_board_price, 0) / cn.paxes * cnsu.percentage / 100 )
 											
-				when cnsu.application_type = 'N' and cn.cnct_is_per_pax = 'N' and cnsu.amount is  null  and
-					 cn.cnsr_is_per_pax = 'Y'  or cn.cnsr_is_per_pax is null 
-					then cn.service_base_price / cn.standard_capacity + cnsu.amount / cn.paxes + COALESCE(cn.pax_base_board_price, 0)
+				when cnsu.application_type in ( 'N', 'T', 'U' ) and cn.cnct_is_per_pax = 'N' and cnsu.amount is  null  and
+					( cn.cnsr_is_per_pax = 'Y'  or cn.cnsr_is_per_pax is null )
+					then ( cn.service_base_price / cn.standard_capacity + cn.service_base_price / cn.standard_capacity * cnsu.percentage / 100 ) + 
+						( COALESCE( cn.pax_base_board_price, 0 ) + COALESCE( cn.pax_base_board_price, 0 ) * cnsu.percentage / 100 )
 											
 				else 0
-			end as n_discount,
+			end as ntu_discount,
+			
+			--- т к рассчитывается три типа скидки, то нужно поле с укзанием какая именнно была рассчитана			
+			case
+				when cnsu.application_type = 'N' then 'N'
+				when cnsu.application_type = 'N' then 'T'
+				when cnsu.application_type = 'N' then 'U'
+			end as ntu_type,
+			
 			case
 				-- рассчитываем наценку A  - переписывает базовую цену для child amount
 				when cnsu.application_type = 'A' 
@@ -258,42 +282,68 @@ with
 			case
 				-- рассчитываем наценку M  - переписывает базовую цену для child amount + board_price
 				when cnsu.application_type = 'M' and cn.cnct_is_per_pax = 'Y'  and
-					cn.cnsr_is_per_pax = 'N'  or cn.cnsr_is_per_pax is null 
+					( cn.cnsr_is_per_pax = 'N'  or cn.cnsr_is_per_pax is null ) 
 					then cnsu.amount / cn.paxes + COALESCE(cn.service_base_board_price, 0) / cn.paxes	
 				when cnsu.application_type = 'M' and cn.cnct_is_per_pax = 'Y'  and
-					cn.cnsr_is_per_pax = 'Y' or cn.cnsr_is_per_pax is null
+					( cn.cnsr_is_per_pax = 'Y' or cn.cnsr_is_per_pax is null )
 					then cnsu.amount / cn.paxes + COALESCE(cn.pax_base_board_price, 0)					
 				when cnsu.application_type = 'M' and cn.cnct_is_per_pax = 'N' and
-					cn.cnsr_is_per_pax = 'N'  or cn.cnsr_is_per_pax is null
+					( cn.cnsr_is_per_pax = 'N'  or cn.cnsr_is_per_pax is null )
 					then cnsu.amount / cn.paxes + COALESCE(cn.service_base_board_price, 0) / cn.standard_capacity
 				when cnsu.application_type = 'M' and cn.cnct_is_per_pax = 'N'  and
-					cn.cnsr_is_per_pax = 'Y' or cn.cnsr_is_per_pax is null
+					( cn.cnsr_is_per_pax = 'Y' or cn.cnsr_is_per_pax is null )
 					then cnsu.amount / cn.paxes + COALESCE(cn.pax_base_board_price, 0)
 										
 				else 0
 			end as m_discount
-			
+		
 		from inc_cnsr cn
 		left join hbd_cnsu cnsu on cnsu.file_id = cn.file_id and
 		( cnsu.room_type = cn.room_type or cnsu.room_type is null ) and ( cnsu.characteristic = cn.characteristic or cnsu.characteristic is null  ) and
 		( cnsu.board = cn.base_board  or cnsu.board is null ) and 
 		cnsu.initial_date::timestamp < to_timestamp( '2018-02-28', 'YYYY-MM-DD' ) and 
-		cnsu.final_date::timestamp > to_timestamp( '2018-03-10', 'YYYY-MM-DD' ) and
+		cnsu.final_date::timestamp > to_timestamp( '2018-03-10', 'YYYY-MM-DD' ) and		
 		( cnsu.application_initial_date::timestamp < now() or cnsu.application_initial_date is null ) and ( cnsu.application_final_date::timestamp > now() or cnsu.application_initial_date is null ) and
-		cnsu.adults <= cn.adults and ( cnsu.pax_order = cn.child_id and cnsu.min_age <= cn.pax_age and cnsu.max_age >= cn.pax_age and cnsu.type = 'N' ) 
+		( ( cnsu.type = 'C' and cn.standard_capacity < cn.paxes )  or 
+		( cnsu.adults <= cn.adults and  cnsu.pax_order = cn.child_id and cnsu.min_age <= cn.pax_age and cnsu.max_age >= cn.pax_age and cnsu.type in ( 'N', 'F' )  ) ) 
 									
 		
+	), 
+	inc_cnsu_n_summ as (
+		select count(cn.file_id), cn.file_id, cn.hotel_id, cn.room_type, cn.characteristic, cn.base_board, cn.rest_days, cn.rest_nights, cn.paxes, cn.adults, cn.childs, cn.infants, 
+			cn.standard_capacity, cn.service_base_price, cn.service_base_board_price /*, cn.pax_base_price, cn.pax_base_board_price,*/
+		from inc_cnsu_n as cn 
+		group by cn.file_id, cn.hotel_id, cn.room_type, cn.characteristic, cn.base_board, cn.rest_days, cn.rest_nights, cn.paxes, cn.adults, cn.childs, cn.infants, 
+			cn.standard_capacity, cn.service_base_price, cn.service_base_board_price
+	), 
+	inc_cnsr_summ as (
+		select count(cn.file_id), cn.file_id, cn.hotel_id, cn.room_type, cn.characteristic, cn.base_board, cn.rest_days, cn.rest_nights, cn.paxes, cn.adults, cn.childs, cn.infants, 
+			cn.standard_capacity, cn.max_pax, cn.amount 
+		from inc_cnsr as cn 
+		group by cn.file_id, cn.hotel_id, cn.room_type, cn.characteristic, cn.base_board, cn.rest_days, cn.rest_nights, cn.paxes, cn.adults, cn.childs, cn.infants, 
+			cn.standard_capacity, cn.max_pax, cn.amount
+		having count(cn.file_id) > 4
 	)
 	
 	
 	--select * from pax_data;
-	--select count(*) from inc_cnsr limit 100
-	select * from inc_cnsu_n where type = 'N' and application_type = 'B' limit 100;
+	select * from inc_cnsr_summ  limit 100
+	--select count(*) from inc_cnsu_n_summ cn limit 100;
 	--select * from cnsr_add limit 100
 	
 	
 	
-
+/*with 
+	cnct as (
+		SELECT  file_id, hotel_id,  room_type, characteristic,  is_price_per_pax, 
+		net_price, price, "specific Rate", base_board, amount
+		FROM public.hbd_cnct
+		GROUP BY file_id, hotel_id, room_type, characteristic,  is_price_per_pax, 
+		net_price, price, "specific Rate", base_board, amount )
+	
+	
+	SELECT count(*) FROM cnct;
+	--SELECT count(*) FROM public.hbd_cnct;*/
 	
 
 
