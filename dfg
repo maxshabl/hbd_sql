@@ -1,0 +1,12 @@
+with cnct as (
+		SELECT  count(file_id) file_id, hotel_id,  room_type, characteristic,  is_price_per_pax, 
+		"specific Rate", base_board, amount
+		FROM public.hbd_cnct
+		GROUP BY file_id, hotel_id, room_type, characteristic,  is_price_per_pax, 
+		"specific Rate", base_board, amount 
+		HAVING count(file_id) > 1 )
+	
+	
+	--SELECT * FROM cnct ;
+	SELECT * FROM public.hbd_cnct 
+		
