@@ -58,7 +58,7 @@ with
 	-- сами наценки на завтрак замножить ничего не должны
 	cnsr as (
 		select
-			distinct on ( cnct.file_id, cnct.room_type, cnct.characteristic, cnct.amount )
+			--distinct on ( cnct.file_id, cnct.room_type, cnct.characteristic, cnct.amount )
 			ccon.*,
 			cnha.standard_capacity,
 			cnha.max_pax,
@@ -72,24 +72,22 @@ with
 			cnct.amount,
 
 			-- получаем цену за номер как за сервис.						
-			avg(
-				case
-					when cnct.is_price_per_pax = 'N' then cnct.amount * ccon.rest_days
-					else 0
-				end
-			) over ( partition by cnct.file_id, cnct.room_type, cnct.characteristic, cnct.amount )  as service_base_price,
+			
+			case
+				when cnct.is_price_per_pax = 'N' then cnct.amount 
+				else 0
+			end	as service_base_price,
 											
-			-- получаем цену за всех людей * на число дней пребывания
-			sum(
-				case
-					when cnct.is_price_per_pax = 'Y' then cnct.amount/ccon.paxes * ccon.rest_days
-					else 0
-				end 
-			) over ( partition by cnct.file_id, cnct.room_type, cnct.characteristic, cnct.amount )  as pax_base_price,
+			-- получаем цену за человека
+			
+			sum(case
+				when cnct.is_price_per_pax = 'Y' then cnct.amount/ccon.paxes 
+				else 0
+			end) over (partition by cnct.file_id) as pax_base_price,
 											
-			-- получаем цену за питание как за сервис * начисло дней пребывания
-			avg (
-				case
+			-- получаем цену за питание как за сервис 
+			
+			case
 				when cnsr.is_per_pax = 'N' and cnsr.amount is not null 	
 					then cnsr.amount																															
 				when cnct.is_price_per_pax = 'N' and cnsr.is_per_pax = 'N' and cnsr.amount is null 
@@ -98,12 +96,10 @@ with
 					then cnsr.percentage / 100 * cnha.standard_capacity * cnct.amount
 																															
 				else 0
-				end 
-			) over ( partition by cnct.file_id, cnct.room_type, cnct.characteristic, cnct.amount ) * ccon.rest_days as service_base_board_price,
+			end  as service_base_board_price,
 											
 			-- получаем сумму за питание * количество дней
-			sum(
-				case
+			case
 					when cnsr.is_per_pax = 'Y' and cnsr.amount is not null
 						then cnsr.amount
 					when cnct.is_price_per_pax = 'N' and cnsr.is_per_pax = 'Y' and cnsr.amount is null 
@@ -111,8 +107,7 @@ with
 					when cnct.is_price_per_pax = 'Y' and cnsr.is_per_pax = 'Y' and cnsr.amount is null 
 						then cnsr.percentage / 100 * cnsr.amount/cnha.standard_capacity
 					else 0
-				end 
-			) over ( partition by cnct.file_id, cnct.room_type, cnct.characteristic, cnct.amount ) * ccon.rest_days  as pax_base_board_price
+			end  as pax_base_board_price
 			
 			--cnsr.*
 			from hbd_cnct as cnct			
@@ -134,7 +129,7 @@ with
 				cnct.final_date::timestamp > to_timestamp( '2018-03-10', 'YYYY-MM-DD' ) )
 			--group by cnct.file_id, cnct.room_type, cnct.characteristic, cnct.amount 
 			
-	), 
+	),
 	cnsu as (
 		select
 			cn.*,
@@ -159,12 +154,11 @@ with
 			end
 			 
 			
-	), 
-	cn
+	)
 	
 	
 	
-	select * from cnsu limit 200;
+	select * from cnsr  where pax_base_price > 0 limit 100;
 	--select * from inc_cnsu_n_summ where b_discount != 0 or r_discount != 0 or a_discount != 0 or m_discount != 0 or ntu_discount != 0 limit 100
 	--select * from inc_cnsu_n_summ where pax_base_price != 0 or b_discount != 0 or r_discount != 0 or a_discount != 0 or m_discount != 0 or ntu_discount != 0 limit 100
 	--select count(*) from inc_cnsu_n where type is not null limit 100
