@@ -125,7 +125,7 @@ with
 	inc_cnsu_n as (
 		select			
 			cn.*,
-			--cnsu.*,
+			cnsu.type,
 			case
 				-- рассчитываем скидку B - к базовой цене с amount
 				when cnsu.application_type = 'B' and cn.cnct_is_per_pax = 'Y'  and
@@ -299,38 +299,51 @@ with
 		
 		from inc_cnsr cn
 		left join hbd_cnsu cnsu on cnsu.file_id = cn.file_id and
-		( cnsu.room_type = cn.room_type or cnsu.room_type is null ) and ( cnsu.characteristic = cn.characteristic or cnsu.characteristic is null  ) and
-		( cnsu.board = cn.base_board  or cnsu.board is null ) and 
-		cnsu.initial_date::timestamp < to_timestamp( '2018-02-28', 'YYYY-MM-DD' ) and 
-		cnsu.final_date::timestamp > to_timestamp( '2018-03-10', 'YYYY-MM-DD' ) and		
-		( cnsu.application_initial_date::timestamp < now() or cnsu.application_initial_date is null ) and ( cnsu.application_final_date::timestamp > now() or cnsu.application_initial_date is null ) and
-		( ( cnsu.type = 'C' and cn.standard_capacity < cn.paxes )  or 
-		( cnsu.adults <= cn.adults and  cnsu.pax_order = cn.child_id and cnsu.min_age <= cn.pax_age and cnsu.max_age >= cn.pax_age and cnsu.type in ( 'N', 'F' )  ) ) 
-									
+			( cnsu.room_type = cn.room_type or cnsu.room_type is null ) and ( cnsu.characteristic = cn.characteristic or cnsu.characteristic is null  ) and
+			( cnsu.board = cn.base_board  or cnsu.board is null ) and 
+			cnsu.initial_date::timestamp < to_timestamp( '2018-02-28', 'YYYY-MM-DD' ) and 
+			cnsu.final_date::timestamp > to_timestamp( '2018-03-10', 'YYYY-MM-DD' ) and		
+			( cnsu.application_initial_date::timestamp < now() or cnsu.application_initial_date is null ) and ( cnsu.application_final_date::timestamp > now() or cnsu.application_initial_date is null ) and
+			( ( cnsu.type = 'C' and cn.standard_capacity < cn.paxes )  or 
+			( cnsu.adults <= cn.adults and  cnsu.pax_order = cn.child_id and cnsu.min_age <= cn.pax_age and cnsu.max_age >= cn.pax_age and cnsu.type in ( 'N', 'F' )  )  )
+
 		
 	), 
 	inc_cnsu_n_summ as (
-		select count(cn.file_id), cn.file_id, cn.hotel_id, cn.room_type, cn.characteristic, cn.base_board, cn.rest_days, cn.rest_nights, cn.paxes, cn.adults, cn.childs, cn.infants, 
-			cn.standard_capacity, cn.service_base_price, cn.service_base_board_price /*, cn.pax_base_price, cn.pax_base_board_price,*/
+		select cn.file_id, cn.hotel_id, cn.room_type, cn.characteristic, cn.base_board, cn.amount, cn.ntu_type, cn.rest_days, cn.rest_nights, cn.paxes, cn.adults, cn.childs, cn.infants, 
+			cn.standard_capacity, 
+			max(cn.service_base_price) as service_base_price,
+			max(cn.service_base_board_price) as service_base_board_price, 
+			sum(cn.pax_base_price) as pax_base_price,
+			sum(cn.pax_base_board_price) as pax_base_board_price,
+			sum(cn.b_discount) as b_discount,
+			sum(cn.r_discount) as r_discount,
+			sum(cn.a_discount) as a_discount,
+			sum(cn.m_discount) as m_discount,
+			sum(cn.ntu_discount) as ntu_discount
+			
 		from inc_cnsu_n as cn 
-		group by cn.file_id, cn.hotel_id, cn.room_type, cn.characteristic, cn.base_board, cn.rest_days, cn.rest_nights, cn.paxes, cn.adults, cn.childs, cn.infants, 
-			cn.standard_capacity, cn.service_base_price, cn.service_base_board_price
-	), 
-	inc_cnsr_summ as (
-		select count(cn.file_id), cn.file_id, cn.hotel_id, cn.room_type, cn.characteristic, cn.base_board, cn.rest_days, cn.rest_nights, cn.paxes, cn.adults, cn.childs, cn.infants, 
-			cn.standard_capacity, cn.max_pax, cn.amount 
-		from inc_cnsr as cn 
-		group by cn.file_id, cn.hotel_id, cn.room_type, cn.characteristic, cn.base_board, cn.rest_days, cn.rest_nights, cn.paxes, cn.adults, cn.childs, cn.infants, 
-			cn.standard_capacity, cn.max_pax, cn.amount
-		having count(cn.file_id) > 4
+		group by cn.file_id, cn.hotel_id, cn.room_type, cn.characteristic, cn.base_board, cn.amount, cn.ntu_type, cn.rest_days, cn.rest_nights, cn.paxes, cn.adults, cn.childs, cn.infants, 
+			cn.standard_capacity
+	),
+	inc_cnsu_g as (
+		select * from inc_cnsu_n_summ as cn
+			left join  hbd_cnsu cnsu on cnsu.file_id = cn.file_id and
+			( cnsu.room_type = cn.room_type or cnsu.room_type is null ) and ( cnsu.characteristic = cn.characteristic or cnsu.characteristic is null  ) and
+			( cnsu.board = cn.base_board  or cnsu.board is null ) and type in ('B', 'K', 'U', 'L', 'M', '0', 'E', 'V', G)
+			order by cnsu.file_id, cnsu.type
+				
 	)
 	
+	--select * from inc_cnsu_n_summ where b_discount != 0 or r_discount != 0 or a_discount != 0 or m_discount != 0 or ntu_discount != 0 limit 100
+	--select * from inc_cnsu_n_summ where pax_base_price != 0 or b_discount != 0 or r_discount != 0 or a_discount != 0 or m_discount != 0 or ntu_discount != 0 limit 100
+	--select count(*) from inc_cnsu_n where type is not null limit 100
 	
-	--select * from pax_data;
-	select * from inc_cnsr_summ  limit 100
-	--select count(*) from inc_cnsu_n_summ cn limit 100;
-	--select * from cnsr_add limit 100
-	
+	select * from inc_cnsu_g as cn limit 100
+
+
+	/*, cn.rest_days, cn.rest_nights, cn.paxes, cn.adults, cn.childs, cn.infants, 
+			cn.standard_capacity, cn.service_base_price, cn.service_base_board_price*/
 	
 	
 /*with 
