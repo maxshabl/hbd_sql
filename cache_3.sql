@@ -35,7 +35,7 @@ with
 	-- соединяем с ccon_pax получая ccon, умноженный на количество pax с pax_id, добавляя child_id + считаем adult
 	ccon as (
 		select
-			distinct on (pax.file_id, pax.rest_days, pax.rest_nights)
+			--distinct on (pax.file_id, pax.rest_days, pax.rest_nights)
 			pax.file_id,
 			pax.hotel_code,
 			pax.rest_days,
@@ -54,11 +54,10 @@ with
 			
 	),
 	
-	-- считаем базовую цену + базовую цену на завтраки Предполагается, что записи в таблице cnct , будут помнрожены на число pax -ов в номере
-	-- сами наценки на завтрак замножить ничего не должны
+	-- считаем базовую цену + базовую цену на завтраки 
 	cnsr as (
 		select
-			--distinct on ( cnct.file_id, cnct.room_type, cnct.characteristic, cnct.amount )
+			distinct on ( cnct.cnct_id )
 			ccon.*,
 			cnha.standard_capacity,
 			cnha.max_pax,
@@ -71,35 +70,39 @@ with
 			cnct.base_board,
 			cnct.amount,
 
-			-- получаем цену за номер как за сервис.						
+			-- получаем цену за номер как за сервис за всех.						
 			
 			case
 				when cnct.is_price_per_pax = 'N' then cnct.amount 
 				else 0
 			end	as service_base_price,
 											
-			-- получаем цену за человека
+			-- получаем сумму за всех 
 			
-			sum(case
-				when cnct.is_price_per_pax = 'Y' then cnct.amount/ccon.paxes 
-				else 0
-			end) over (partition by cnct.file_id) as pax_base_price,
+			sum( 
+				case
+					when cnct.is_price_per_pax = 'Y' then cnct.amount/ccon.paxes 
+					else 0
+				end 
+			) over ( partition by cnct.cnct_id ) as pax_base_price,
 											
 			-- получаем цену за питание как за сервис 
-			
-			case
-				when cnsr.is_per_pax = 'N' and cnsr.amount is not null 	
-					then cnsr.amount																															
-				when cnct.is_price_per_pax = 'N' and cnsr.is_per_pax = 'N' and cnsr.amount is null 
-					then cnct.amount * cnsr.percentage / 100 																															
-				when cnct.is_price_per_pax = 'Y' and cnsr.is_per_pax = 'N' and cnsr.amount is null																										
-					then cnsr.percentage / 100 * cnha.standard_capacity * cnct.amount
+			sum(
+				case
+					when cnsr.is_per_pax = 'N' and cnsr.amount is not null 	
+						then cnsr.amount																															
+					when cnct.is_price_per_pax = 'N' and cnsr.is_per_pax = 'N' and cnsr.amount is null 
+						then cnct.amount * cnsr.percentage / 100 																															
+					when cnct.is_price_per_pax = 'Y' and cnsr.is_per_pax = 'N' and cnsr.amount is null																										
+						then cnsr.percentage / 100 * cnha.standard_capacity * cnct.amount
 																															
-				else 0
-			end  as service_base_board_price,
+					else 0
+				end  
+			) over ( partition by cnct.cnct_id ) as service_base_board_price,
 											
-			-- получаем сумму за питание * количество дней
-			case
+			-- получаем сумму за всех
+			sum(
+				case
 					when cnsr.is_per_pax = 'Y' and cnsr.amount is not null
 						then cnsr.amount
 					when cnct.is_price_per_pax = 'N' and cnsr.is_per_pax = 'Y' and cnsr.amount is null 
@@ -107,10 +110,11 @@ with
 					when cnct.is_price_per_pax = 'Y' and cnsr.is_per_pax = 'Y' and cnsr.amount is null 
 						then cnsr.percentage / 100 * cnsr.amount/cnha.standard_capacity
 					else 0
-			end  as pax_base_board_price
+				end 
+			) over ( partition by cnct.cnct_id ) as pax_base_board_price
 			
 			--cnsr.*
-			from hbd_cnct as cnct			
+			from hbd_cnct2 as cnct			
 			inner join ccon on ccon.file_id = cnct.file_id
 			inner join hbd_cnha as cnha on
 				cnha.file_id = cnct.file_id and cnha.room_type = cnct.room_type and cnha.characteristic = cnct.characteristic and  -- присоединяем структуру с параметрами размещения, отбрасывая то, что не подходит по парамерам вместимости						
@@ -139,6 +143,8 @@ with
 			cnsu.application_type,
 			cnsu.is_cumulative,
 			cnsu.is_per_pax as cnsu_is_per_pax
+											
+											
 			from cnsr as cn
 			left join hbd_cnsu as cnsu on cnsu.file_id = cn.file_id and
 			( cnsu.room_type = cn.room_type or cnsu.room_type is null ) and ( cnsu.characteristic = cn.characteristic or cnsu.characteristic is null  ) and
@@ -152,35 +158,39 @@ with
 				when cnsu.type = 'F' then  cnsu.pax_order <= cn.infants
 				when cnsu.type = 'C' then  cn.standard_capacity < cn.paxes
 			end
+			order by cn.file_id, cn.room_type, cn.characteristic, cn.base_board, cnsu.order
 			 
 			
+	),
+	cngr as (
+		select 
+			cn.*,
+			cngr.frees,
+			cngr.free_code,
+			cngr.discount,
+			cngr.application_base_type,
+			cngr.application_board_type,
+			cngr.application_discount_type,
+			cngr.application_stay_type
+			from cnsr as cn
+			left join hbd_cngr as cngr on cngr.file_id = cn.file_id and
+				( cngr.room_type = cn.room_type or cngr.room_type is null ) and ( cngr.characteristic = cn.characteristic or cngr.characteristic is null  ) and
+				( cngr.board = cn.base_board  or cngr.board is null ) and 
+				cngr.initial_date::timestamp < to_timestamp( '2018-02-28', 'YYYY-MM-DD' ) and 
+				cngr.final_date::timestamp > to_timestamp( '2018-03-10', 'YYYY-MM-DD' ) and		
+				( cngr.application_initial_date::timestamp < now() or cngr.application_initial_date is null ) and 
+				( cngr.application_final_date::timestamp > now() or cngr.application_initial_date is null ) and
+				( cngr.min_days < cn.rest_days and cngr.max_days > cn.rest_days)
 	)
 	
-	
-	
-	select * from cnsr  where pax_base_price > 0 limit 100;
-	--select * from inc_cnsu_n_summ where b_discount != 0 or r_discount != 0 or a_discount != 0 or m_discount != 0 or ntu_discount != 0 limit 100
-	--select * from inc_cnsu_n_summ where pax_base_price != 0 or b_discount != 0 or r_discount != 0 or a_discount != 0 or m_discount != 0 or ntu_discount != 0 limit 100
-	--select count(*) from inc_cnsu_n where type is not null limit 100
-	
-	--select * from inc_cnsu_g as cn limit 100
+	select * from cnsu as cn where type is not null limit 100;
+	--select * from cngr where frees is not null limit 100
+	--select count(*) from ccon_pax limit 100;
+	--select cnsu_calc();
+	--select * from cnsu as cn limit 100
 
 
-	/*, cn.rest_days, cn.rest_nights, cn.paxes, cn.adults, cn.childs, cn.infants, 
-			cn.standard_capacity, cn.service_base_price, cn.service_base_board_price*/ 
-	
-	
-/*with 
-	cnct as (
-		SELECT  file_id, hotel_id,  room_type, characteristic,  is_price_per_pax, 
-		net_price, price, "specific Rate", base_board, amount
-		FROM public.hbd_cnct
-		GROUP BY file_id, hotel_id, room_type, characteristic,  is_price_per_pax, 
-		net_price, price, "specific Rate", base_board, amount )
-	
-	
-	SELECT count(*) FROM cnct;
-	--SELECT count(*) FROM public.hbd_cnct;*/
+
 	
 
 

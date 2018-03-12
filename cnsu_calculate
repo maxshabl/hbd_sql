@@ -1,0 +1,19 @@
+drop function if exists cnsu_calc();
+
+create or replace function cnsu_calc() 
+returns setof hbd_cnsu as
+$$
+DECLARE
+	r record;
+BEGIN
+  for r in select * from hbd_cnsu as cn limit 100
+  loop
+  	--r.file_id = '';
+  	return next r;
+  end loop;
+  return;
+END;
+$$
+language plpgsql;
+
+select * from cnsu_calc()
