@@ -1,0 +1,23 @@
+with cnct_group as (
+	select count(cnct_id), cnct_id, sum(amount) as cnct_price
+	from hbd_cnct2 as cnct
+	where ( DATE '2018-03-20',  DATE '2018-03-30' ) overlaps ( cnct.initial_date, cnct.final_date )
+	group by cnct_id
+	-- отбираем типы комнат, где есть свободные дни на протяжении всего периода
+	having count(cnct_id) = (EXTRACT(EPOCH FROM timestamptz '2018-03-30') -
+       EXTRACT(EPOCH FROM timestamptz '2018-03-20')) / 60 / 60 / 24
+	--order by cnct.cnct_id
+	limit 100
+)
+
+--select * from cnct_group limit 100
+
+select 
+	distinct on(cnct.cnct_id)  
+	cnct.cnct_id, cnct.file_id, cnct.hotel_id, cnct.initial_date, cnct.final_date, cnct.room_type, cnct.characteristic, cnct.base_board,
+	cnct_g.cnct_price
+	from hbd_cnct2 as cnct 
+	inner join cnct_group as cnct_g on cnct.cnct_id = cnct_g.cnct_id and  ( DATE '2018-03-20',  DATE '2018-03-30' ) overlaps ( cnct.initial_date, cnct.final_date )
+	limit 100;
+
+ 
