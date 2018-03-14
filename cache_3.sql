@@ -35,7 +35,7 @@ with
 	-- соединяем с ccon_pax получая ccon, умноженный на количество pax с pax_id, добавляя child_id + считаем adult
 	ccon as (
 		select
-			distinct on ( pax.file_id )
+			--distinct on ( pax.file_id )
 			pax.file_id,
 			pax.hotel_code,
 			pax.rest_days,
@@ -53,47 +53,68 @@ with
 				pax.file_id = child.file_id and pax.pax_id = child.pax_id											 
 			left join ccon_infant infant on 
 				pax.file_id = infant.file_id and pax.pax_id = child.pax_id
+			WHERE pax.file_id = '436_138726_M_F'
 			
 	),
-	
+	-- отбираем типы комнат, где есть свободные дни на протяжении всего периода ,считаем цену
 	cnct_group as (
-		select count(cnct_id), cnct_id, sum(amount) as amount
-		from hbd_cnct2 as cnct
-		where ( DATE '2018-04-20',  DATE '2018-04-30' ) overlaps ( cnct.initial_date, cnct.final_date )
-		group by cnct_id
-		-- отбираем типы комнат, где есть свободные дни на протяжении всего периода
-		having count(cnct_id) = (EXTRACT(EPOCH FROM timestamptz '2018-04-30') - EXTRACT(EPOCH FROM timestamptz '2018-04-20')) / 60 / 60 / 24
+		select count(cnct_id), cnct_id, file_id, room_type, characteristic, sum(amount) as amount
+			from hbd_cnct2 as cnct
+			where ( DATE '2018-04-20',  DATE '2018-04-30' ) overlaps ( cnct.initial_date, cnct.final_date )
+			group by cnct_id, file_id, room_type, characteristic
+			
+			having count(cnct_id) = (EXTRACT(EPOCH FROM timestamptz '2018-04-30') - EXTRACT(EPOCH FROM timestamptz '2018-04-20')) / 60 / 60 / 24
 	--order by cnct.cnct_id
 	
 	),
 
---select * from cnct_group limit 100
-
-	cnct as ( 
+    -- 
+	pre_cnct as ( 
 		select 
-			distinct on(cnct.cnct_id)  
-			cnct.cnct_id, cnct.file_id, cnct.hotel_id, cnct.initial_date, cnct.final_date, cnct.room_type, cnct.characteristic, cnct.base_board, cnct.is_price_per_pax,
-			cnct_g.amount
+			distinct on(cnct.cnct_id) 
+			cnct.*
+			--cnct_g.amount
 			from hbd_cnct2 as cnct 
 			inner join cnct_group as cnct_g on cnct.cnct_id = cnct_g.cnct_id and  ( DATE '2018-04-20',  DATE '2018-04-30' ) overlaps ( cnct.initial_date, cnct.final_date )
+			
 			--where file_id = '436_142531_M_F'
-			where file_id = '436_138726_M_F' --для cnsr, cnsu
+			where cnct.file_id = '436_138726_M_F' --для cnsr, cnsu
+	),
+	cnct as (
+		select 
+			ccon.*,
+			cnct.cnct_id, cnct.hotel_id, cnct.initial_date, cnct.final_date, cnct.room_type, cnct.characteristic, cnct.base_board, cnct.is_price_per_pax,
+			cnct.amount,
+			cnha.standard_capacity,
+			cnha.max_pax,
+			cnha.max_children
+			from pre_cnct as cnct 
+			inner join ccon on ccon.file_id = cnct.file_id
+			inner join hbd_cnha as cnha 
+				on cnha.file_id = cnct.file_id and cnha.room_type = cnct.room_type and cnha.characteristic = cnct.characteristic  -- присоединяем структуру с параметрами размещения, отбрасывая то, что не подходит по парамерам вместимости						
+					and cnha.max_pax >= ccon.paxes and cnha.max_children >= ccon.childs 
+			
 	),
 	
 	-- считаем базовую цену + базовую цену на завтраки 
 	cnsr as (
 		select
 			cnct.cnct_id,
-			ccon.*,
-			cnha.standard_capacity,
-			cnha.max_pax,
+			cnct.rest_days,
+			cnct.rest_nights,
+			cnct.paxes,
+			cnct.adults,
+			cnct.childs,
+			cnct.infants,
+			cnct.ages,
+			cnct.standard_capacity,
+			cnct.max_pax,
 			cnct.hotel_id,			 
 			cnct.is_price_per_pax as cnct_is_per_pax,
 		    cnsr.is_per_pax as cnsr_is_per_pax,
-			cnct.room_type, cnct.characteristic, cnct.base_board,
-			cnct.amount,
-			cnha.max_pax,
-			cnha.max_children,
+			cnct.file_id,cnct.room_type, cnct.characteristic, cnct.base_board,
+			cnct.amount,			
+			cnct.max_children,
 
 			-- получаем цену за номер как за сервис за всех				
 			case
@@ -104,7 +125,7 @@ with
 			-- получаем сумму за всех 
 			sum( 
 				case
-					when cnct.is_price_per_pax = 'Y' then cnct.amount/ccon.paxes 
+					when cnct.is_price_per_pax = 'Y' then cnct.amount/cnct.paxes 
 					else 0
 				end 
 			) over ( partition by cnct.cnct_id ) as pax_base_price,
@@ -120,7 +141,7 @@ with
 					when cnct.is_price_per_pax = 'N' and cnsr.is_per_pax = 'N' and cnsr.amount is null 
 						then cnct.amount * cnsr.percentage / 100
 					when cnct.is_price_per_pax = 'Y' and cnsr.is_per_pax = 'N' and cnsr.amount is null																										
-						then  ( ( cnct.amount * cnha.standard_capacity ) * cnsr.percentage / 100 )
+						then  ( ( cnct.amount * cnct.standard_capacity ) * cnsr.percentage / 100 )
 					
 					else 0
 				end  
@@ -131,28 +152,24 @@ with
 				case
 					-- расчет если скидка в абсолютных значениях
 					when cnsr.is_per_pax = 'Y' and cnsr.amount is not null 	
-						then cnsr.amount * ccon.paxes
+						then cnsr.amount * cnct.paxes
 																															
 					-- расчет если скидка в процентах																					
 					when cnct.is_price_per_pax = 'N' and cnsr.is_per_pax = 'Y' and cnsr.amount is null																										
-						then  ( ( cnct.amount / cnha.standard_capacity ) * cnsr.percentage / 100 ) * ccon.paxes					
+						then  ( ( cnct.amount / cnct.standard_capacity ) * cnsr.percentage / 100 ) * cnct.paxes					
 					when cnct.is_price_per_pax = 'Y' and cnsr.is_per_pax = 'Y' and cnsr.amount is null																										
-						then  ( cnsr.percentage / 100 )	* ccon.paxes
+						then  ( cnsr.percentage / 100 )	* cnct.paxes
 					else 0
 				end  
 			) over ( partition by cnct.cnct_id ) as pax_base_board_price
 			
 									
 			from cnct			
-			inner join ccon on ccon.file_id = cnct.file_id
-			inner join hbd_cnha as cnha 
-				on cnha.file_id = cnct.file_id and cnha.room_type = cnct.room_type and cnha.characteristic = cnct.characteristic  -- присоединяем структуру с параметрами размещения, отбрасывая то, что не подходит по парамерам вместимости						
-					and cnha.max_pax >= ccon.paxes and cnha.max_children >= ccon.childs 
 			left join hbd_cnsr as cnsr  -- присоединяем наценки по завтракам, учитывая параметры поиска
 				on cnsr.file_id = cnct.file_id  
 					and ( cnsr.room_type = cnct.room_type or cnsr.room_type is null )  
 					and ( cnsr.characteristic = cnct.characteristic or cnsr.characteristic is null ) 
-					and ( ( cnsr.min_age is null and cnsr.min_age is null ) or ( cnsr.min_age <= any( ccon.ages )  and cnsr.max_age >= any( ccon.ages ) ) ) 
+					and ( ( cnsr.min_age is null and cnsr.min_age is null ) or ( cnsr.min_age <= any( cnct.ages )  and cnsr.max_age >= any( cnct.ages ) ) ) 
 					and ( DATE '2018-04-20',  DATE '2018-04-30' ) overlaps ( cnsr.initial_date, cnsr.final_date )
 			
 			--group by cnct.file_id, cnct.room_type, cnct.characteristic, cnct.amount 
@@ -170,7 +187,7 @@ with
 			cnsu.application_type,
 			cnsu.is_cumulative,
 			cnsu.is_per_pax as cnsu_is_per_pax
-			from cnsr as cn
+			from cnct as cn
 			left join hbd_cnsu as cnsu 
 				on cnsu.file_id = cn.file_id 
 					and ( cnsu.room_type = cn.room_type or cnsu.room_type is null ) and ( cnsu.characteristic = cn.characteristic or cnsu.characteristic is null  ) 
@@ -195,12 +212,7 @@ with
 			from hbd_cnoe as cnoe
 	),
 	cngr as (
-		select
-			
-			row_number() OVER ( partition by cn.cnct_id )  AS num,
-			count( cn.cnct_id) OVER (partition by cn.cnct_id )  AS count,
-			array_agg(  cn.cnsu_code  ) OVER ( partition by cn.cnct_id )  || 
-			array_agg(  cngr.free_code ) OVER ( partition by cn.cnct_id ) as codes,							
+		select				
 			--array_agg(  cnoe.* ) OVER ( partition by cn.cnct_id ) as cnoe,								
 			cn.*,
 			cngr.frees,
@@ -219,7 +231,7 @@ with
 					and ( cngr.application_initial_date is null or cngr.application_initial_date::timestamp < now() )
 					and ( cngr.application_final_date is null or cngr.application_final_date::timestamp > now() )
 					and ( cngr.min_days < cn.rest_days and cngr.max_days > cn.rest_days)			
-			order by cn.cnct_id
+			order by cn.cnct_id, cn.room_type, cn.characteristic
 	)/*,
 	cnoe as (
 		select cngr.* 
@@ -227,7 +239,7 @@ with
 			where 
 	)*/
 	
-	select * from cnoe  limit 100;
+	select * from ccon  limit 100;
 	
 	--select * from cnsu as cn where type is not null limit 100;
 	--select * from cngr where frees is not null limit 100

@@ -1,0 +1,4 @@
+sad_name, rest_days, rest_nights, paxes, adults, childes, infants, standard_capacity, max_pax, max_children, cnct_is_per_pax, cnsr_is_per_pax, cnct_id,  file_id, hotel_id, room_type, 
+characteristic, base_board, service_base_price, pax_base_price,  service_base_board_price, pax_base_board_price, sad_code
+
+order, type, application_type, amount, percentage, cnsu_is_per_pax
