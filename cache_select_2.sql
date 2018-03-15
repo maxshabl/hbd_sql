@@ -4,20 +4,33 @@ CREATE FUNCTION hbd_sad_calc() RETURNS setof hbd_sad AS $$
 
 DECLARE
     rec record;
+	dsk json;
+	-- храним базовые цены за все ночи
 	sbp numeric := 0;
 	sbbp numeric := 0;
 	pbp numeric := 0;
 	pbbp numeric := 0;
-	sad_name text;
+	
+	sad_days integer := 0; -- храним количество скидочных дней
+	no_sad_days integer := 0; -- храним количество обычных дней
+	-- название предидущей структуры
+	sad_name text := '';
 	
 BEGIN
 	for rec in 
 with 
+	-- делаем таблицу с днями недели и их количеством
+	bk_days as (
+		select 
+			count(book_days)::integer as count_bk_days, extract(dow from book_days.book_days::timestamp)::integer as bk_day
+			from generate_series('2018-04-20'::date, '2018-04-29'::date, '1 day') as book_days
+			group by bk_day
+	),
 	-- помещаем pax в таблицу
 	pax_data as ( 
 		select row_number() over ( order by pax_age desc ) as pax_id, pax_age, 
 			(to_date( '2018-04-30', 'YYYY-MM-DD' ) - to_date( '2018-04-20', 'YYYY-MM-DD' )) as rest_days,
-			(to_date( '2018-04-30', 'YYYY-MM-DD' ) - to_date( '2018-04-20', 'YYYY-MM-DD' )) - 1 as rest_nights
+			(to_date( '2018-04-30', 'YYYY-MM-DD' ) - to_date( '2018-04-20', 'YYYY-MM-DD' )) as rest_nights
 			from unnest ( array[1,5,30,30] ) as pax_age order by pax_age desc 
 	),
 	-- cross join c ccon чтобы получить данные о группировке pax  в adult, child, infant
@@ -113,56 +126,62 @@ with
 			cnct.is_price_per_pax as cnct_is_per_pax,
 		    cnsr.is_per_pax as cnsr_is_per_pax,
 			cnct.cnct_id, cnct.file_id, cnct.hotel_code, cnct.room_type, cnct.characteristic, cnct.base_board,
-			
+			array [ 
+				case cnsr.on_sunday when 'Y' then 0 else null end,
+				case cnsr.on_monday when 'Y' then 1 else null end,
+				case cnsr.on_tuesday when 'Y' then 2 else null end,
+				case cnsr.on_wednesday when 'Y' then 3 else null end,
+				case cnsr.on_thursday when 'Y' then 4 else null end,
+				case cnsr.on_friday when 'Y' then 5 else null end,
+				case cnsr.on_saturday when 'Y' then 6 else null end 
+			] week_days,
 			--cnct.amount,			
 			
 
 			-- получаем цену за номер как за сервис за всех				
 			case
-				when cnct.is_price_per_pax = 'N' then cnct.amount 
+				when cnct.is_price_per_pax = 'N' then cnct.amount * cnct.rest_nights
 				else 0
 			end	as service_base_price,
 											
-			-- получаем сумму за всех 
-			sum( 
-				case
-					when cnct.is_price_per_pax = 'Y' then cnct.amount/cnct.paxes 
-					else 0
-				end 
-			) over ( partition by cnct.cnct_id ) as pax_base_price,
+			-- получаем цену на человека 			
+			case
+				when cnct.is_price_per_pax = 'Y' then 
+					cnct.amount / cnct.paxes * cnct.rest_nights
+				else 0
+			end as pax_base_price,
 											
 			-- получаем цену за питание как за сервис 
-			sum(
-				case
-					-- расчет если скидка в абсолютных значениях
-					when cnsr.is_per_pax = 'N' and cnsr.amount is not null 	
-						then cnsr.amount
-					
-					-- расчет если скидка в проыентах																										
-					when cnct.is_price_per_pax = 'N' and cnsr.is_per_pax = 'N' and cnsr.amount is null 
-						then cnct.amount * cnsr.percentage / 100
-					when cnct.is_price_per_pax = 'Y' and cnsr.is_per_pax = 'N' and cnsr.amount is null																										
-						then  ( ( cnct.amount * cnct.standard_capacity ) * cnsr.percentage / 100 )
-					
-					else 0
-				end  
-			) over ( partition by cnct.cnct_id ) as service_base_board_price,
+			
+			case
+				-- расчет если скидка в абсолютных значениях
+				when cnsr.is_per_pax = 'N' and cnsr.amount is not null 	
+					then cnsr.amount * cnct.rest_nights
+
+				-- расчет если скидка в проыентах																										
+				when cnct.is_price_per_pax = 'N' and cnsr.is_per_pax = 'N' and cnsr.amount is null 
+					then cnct.amount * cnsr.percentage / 100 * cnct.rest_nights
+				when cnct.is_price_per_pax = 'Y' and cnsr.is_per_pax = 'N' and cnsr.amount is null																										
+					then  ( ( cnct.amount * cnct.standard_capacity ) * cnsr.percentage / 100 ) * cnct.rest_nights
+
+				else 0
+			end  as service_base_board_price,
 											
 			-- получаем цену за питание за человека
-			sum(
-				case
-					-- расчет если скидка в абсолютных значениях
-					when cnsr.is_per_pax = 'Y' and cnsr.amount is not null 	
-						then cnsr.amount * cnct.paxes
-																															
-					-- расчет если скидка в процентах																					
-					when cnct.is_price_per_pax = 'N' and cnsr.is_per_pax = 'Y' and cnsr.amount is null																										
-						then  ( ( cnct.amount / cnct.standard_capacity ) * cnsr.percentage / 100 ) * cnct.paxes					
-					when cnct.is_price_per_pax = 'Y' and cnsr.is_per_pax = 'Y' and cnsr.amount is null																										
-						then  ( cnsr.percentage / 100 )	* cnct.paxes
-					else 0
-				end  
-			) over ( partition by cnct.cnct_id ) as pax_base_board_price	
+			
+			case
+				-- расчет если скидка в абсолютных значениях
+				when cnsr.is_per_pax = 'Y' and cnsr.amount is not null 	
+					then cnsr.amount * cnct.paxes * cnct.rest_nights
+
+				-- расчет если скидка в процентах																					
+				when cnct.is_price_per_pax = 'N' and cnsr.is_per_pax = 'Y' and cnsr.amount is null																										
+					then  ( ( cnct.amount / cnct.standard_capacity ) * cnsr.percentage / 100 ) * cnct.paxes	* cnct.rest_nights				
+				when cnct.is_price_per_pax = 'Y' and cnsr.is_per_pax = 'Y' and cnsr.amount is null																										
+					then  ( cnsr.percentage / 100 )	* cnct.paxes * cnct.rest_nights
+				else 0
+			end pax_base_board_price
+											
 			from cnct			
 			left join hbd_cnsr as cnsr  -- присоединяем наценки по завтракам, учитывая параметры поиска
 				on cnsr.file_id = cnct.file_id  
@@ -192,11 +211,21 @@ with
 			cn.cnct_id, cn.file_id, cn.hotel_code, cn.room_type, cn.characteristic, cn.base_board, cnsu.supplement_or_discount_code as sad_code,
 			cnsu.order,
 			cnsu.type,
-			cnsu.application_type,			
+			cnsu.application_type,	
 			cnsu.amount,
-			cnsu.percentage,			
+			 
+			cnsu.percentage ,			
 			cnsu.is_cumulative,
-			cnsu.is_per_pax as cnsu_is_per_pax
+			cnsu.is_per_pax as cnsu_is_per_pax,
+			array [ 
+				case cnsu.on_sunday when 'Y' then 0 else null end,
+				case cnsu.on_monday when 'Y' then 1 else null end,
+				case cnsu.on_tuesday when 'Y' then 2 else null end,
+				case cnsu.on_wednesday when 'Y' then 3 else null end,
+				case cnsu.on_thursday when 'Y' then 4 else null end,
+				case cnsu.on_friday when 'Y' then 5 else null end,
+				case cnsu.on_saturday when 'Y' then 6 else null end 
+			] week_days
 			from cnct as cn
 			left join hbd_cnsu as cnsu 
 				on cnsu.file_id = cn.file_id 
@@ -248,7 +277,16 @@ with
 			cngr.application_base_type,
 			cngr.application_board_type,
 			cngr.application_discount_type,
-			cngr.application_stay_type			
+			cngr.application_stay_type,
+			array [ 
+				case cngr.on_sunday when 'Y' then 0 else null end,
+				case cngr.on_monday when 'Y' then 1 else null end,
+				case cngr.on_tuesday when 'Y' then 2 else null end,
+				case cngr.on_wednesday when 'Y' then 3 else null end,
+				case cngr.on_thursday when 'Y' then 4 else null end,
+				case cngr.on_friday when 'Y' then 5 else null end,
+				case cngr.on_saturday when 'Y' then 6 else null end 
+			] week_days
 			from cnct as cn
 			left join hbd_cngr as cngr 
 				on cngr.file_id = cn.file_id 
@@ -264,7 +302,7 @@ with
 	 sad as (
 		( select  'cnsr'::text as sad_name, rest_days, rest_nights, paxes, adults, childes, infants, standard_capacity, max_pax, max_children, 
 			cnct_is_per_pax, cnsr_is_per_pax, cnct_id,  
-			file_id, hotel_code, room_type, characteristic, base_board, 
+			file_id, hotel_code, room_type, characteristic, base_board, week_days, (select json_agg(bk_days.*) from bk_days) as bk_days,
 			service_base_price, pax_base_price,  service_base_board_price, pax_base_board_price, 
 			'' as sad_code, -100000 as "order", '' as "type", '' as application_type, 0 as amount, 0 as percentage, '' as cnsu_is_per_pax,  -- поля cnsu
 			0 as frees, 0 as discount, '' as application_base_type ,'' as application_board_type ,'' as application_discount_type ,'' as application_stay_type -- поля cngr
@@ -274,7 +312,7 @@ with
 	
 		select  'cnsu'::text as sad_name, rest_days, rest_nights, paxes, adults, childes, infants, standard_capacity, max_pax, max_children, 
 			cnct_is_per_pax, '', cnct_id,  
-			file_id, hotel_code, room_type,	characteristic, base_board, 
+			file_id, hotel_code, room_type,	characteristic, base_board, week_days, (select json_agg(bk_days.*) from bk_days) as bk_days,
 			0, 0,  0, 0, -- поля после расчетов от cnsr
 			sad_code, "order", "type", application_type, amount, percentage, cnsu_is_per_pax,
 			0,0,'','','','' -- поля cngr
@@ -284,7 +322,7 @@ with
 													
 		select 'cngr'::text as sad_name, rest_days, rest_nights, paxes, adults, childes, infants, standard_capacity, max_pax, max_children, 
 			cnct_is_per_pax, '', cnct_id,  
-			file_id, hotel_code, room_type,	characteristic, base_board,
+			file_id, hotel_code, room_type,	characteristic, base_board, week_days, (select json_agg(bk_days.*) from bk_days) as bk_days,
 			0, 0,  0, 0, 
 			free_code, 100000, '', '', 0, 0, '',
 			frees, discount, application_base_type, application_board_type, application_discount_type, application_stay_type			
@@ -297,26 +335,93 @@ with
 			
 	)
 
-
-
 -- считаем скидки
 	
     	select sad.* from sad
 	loop 
+		-- определяем количество дней, когда скидки действуют и не действуют
+		for dsk in select * from json_array_elements( rec.bk_days )
+		loop
+			if rec.application_type = any(array['T', 'U']) 
+				sad_days := 1;
+				no_sad_days := rest_nights - 1;
+			elseif (dsk->>'bk_day')::integer = any(rec.week_days) then
+				sad_days := sad_days + (dsk->>'count_bk_day')::integer;
+			else
+				no_sad_days := no_sad_days + (dsk->>'count_bk_day')::integer;
+				--raise notice '%',  dsk->>'bk_day';
+			end if;
+		end loop;
+		
+		
+		
 		-- считаем базовые цены на номер и завтрак 
 		if rec.sad_name = 'cnsr' then
 				sad_name := rec.sad_name;
-				sbp := rec.service_base_price;	
+				
+				sbp := rec.service_base_price ;	
 				sbbp := rec.service_base_board_price;
 				pbp := rec.pax_base_price + pbp;
 				pbbp := rec.pax_base_board_price + pbbp;
-				continue;
+				
+				--continue;
 		elseif rec.sad_name = 'cnsu' then
 				sad_name := rec.sad_name;
+				--	определяем количество дней со скидками и без скидок sad_days no_sad_days
+				
+				
 				if rec.type = 'N' then
-					if rec.application_type = 'B' then
-						
-				end if
+				
+					-- если скидка на базовую цену
+					if rec.application_type = any( array['B', 'N'] ) and rec.cnct_is_per_pax = 'Y' and rec.amount is not null then
+						pbp := pbp - pbp / rec.paxes + ( pbp + rec.amount / rec.paxes );
+						raise notice '%', pbp;
+					elseif rec.application_type = any( array['B', 'N'] ) and rec.cnct_is_per_pax = 'N' and rec.amount is not null then
+						sbp := sbp - sbp / rec.standard_capacity + ( sbp / rec.standard_capacity + rec.amount / rec.paxes );
+					elseif rec.application_type = any( array['B', 'N'] ) and rec.cnct_is_per_pax = 'Y' and rec.percentage is not null then
+						pbp := pbp - pbp / rec.paxes + ( pbp / rec.paxes + rec.percentage / 100 * pbp / rec.paxes );
+					elseif rec.application_type = any( array['B', 'N'] ) and rec.cnct_is_per_pax = 'N' and rec.percentage is not null then
+						sbp := sbp - sbp / rec.standard_capacity + 
+							 sbp / rec.standard_capacity + ( sbp / rec.standard_capacity + rec.percentage / 100 * sbp / rec.standard_capacity ) ;
+							
+					-- если скидка на базовую цену на завтрак
+					elseif rec.application_type = any(array['R', 'N']) and rec.cnsr_is_per_pax = 'Y' and rec.amount is not null then
+						pbbp := pbbp - pbbp / rec.paxes + ( pbbp + rec.amount / rec.paxes );
+						--raise notice '%', pbbp;
+					elseif rec.application_type = any(array['R', 'N']) and rec.cnsr_is_per_pax = 'N' and rec.amount is not null then
+						sbbp := sbbp - sbbp / rec.standard_capacity + ( sbbp / rec.standard_capacity + rec.amount / rec.paxes );
+					elseif rec.application_type = any(array['R', 'N']) and rec.cnsr_is_per_pax = 'Y' and rec.percentage is not null then
+						pbbp := pbbp - pbbp / rec.paxes + ( pbbp / rec.paxes + rec.percentage / 100 * pbbp / rec.paxes );
+					elseif rec.application_type = any(array['R', 'N']) and rec.cnsr_is_per_pax = 'N' and rec.percentage is not null then
+						sbbp := sbbp - sbbp / rec.standard_capacity + 
+							 sbbp / rec.standard_capacity + ( sbbp / rec.standard_capacity + rec.percentage / 100 * sbbp / rec.standard_capacity ) ;
+							
+					-- абсолютная скидка на базовую цену. Завтрак остается без изменений???
+					elseif rec.application_type = 'A' and rec.cnct_is_per_pax = 'Y' and rec.amount is not null then
+						pbp := pbp - pbp / rec.paxes + rec.amount / rec.paxes ;
+						raise notice '%', pbp;
+					elseif rec.application_type = 'A' and rec.cnct_is_per_pax = 'N' and rec.amount is not null then
+						sbp := sbp - sbp / rec.standard_capacity + rec.amount / rec.paxes ;					
+
+					-- aбсолютная скидка на базовую цену, но к ней над прибавить базовую цену на завтрак. Сам завтрак остается без изменений???
+					elseif rec.application_type = 'M' and rec.cnct_is_per_pax = 'Y' and rec.cnsr_is_per_pax = 'N'
+						and rec.amount is not null then
+							pbp := pbp - pbp / rec.paxes + rec.amount / rec.paxes + pbbp / rec.paxes;
+								raise notice '%', pbp;
+					elseif rec.application_type = 'M' and rec.cnct_is_per_pax = 'Y' and rec.cnsr_is_per_pax = 'Y'
+						and rec.amount is not null 	then
+							pbp := pbp - pbp / rec.paxes + rec.amount / rec.paxes + sbbp / rec.paxes;
+					elseif rec.application_type = 'M' and rec.cnct_is_per_pax = 'N' and rec.cnsr_is_per_pax = 'N'
+						and rec.amount is not null then
+							sbp := sbp - sbp / rec.standard_capacity + sbbp / rec.standard_capacity;
+					elseif rec.application_type = 'M' and rec.cnct_is_per_pax = 'N' and rec.cnsr_is_per_pax = 'Y'
+						and rec.amount is not null 	then
+							sbp := sbp - sbp / rec.standard_capacity + pbbp / rec.paxes;
+					end if;
+					
+					
+					
+				end if;
 					
 			 
 			
