@@ -1,43 +1,28 @@
 
-drop function if exists hbd_sad_calc(); 
-CREATE FUNCTION hbd_sad_calc() RETURNS setof hbd_sad AS $$
+drop function if exists _hbd_sad_list(date, date, integer[]); 
+
+CREATE FUNCTION _hbd_sad_list(in_date date, out_date date , variadic ages integer[]) 
+	RETURNS setof hbd_sad AS $$
 
 DECLARE
-    rec record;
-	dsk json;
-	-- храним базовые цены за все ночи
-	sbp numeric := 0;
-	sbbp numeric := 0;
-	pbp numeric := 0;
-	pbbp numeric := 0;
-	
-	-- храним базовые цены за ночь
-	sbp_1 numeric := 0;
-	sbbp_1 numeric := 0;
-	pbp_1 numeric := 0;
-	pbbp_1 numeric := 0;
-	
-	sad_days integer := 0; -- храним количество скидочных дней
-	no_sad_days integer := 0; -- храним количество обычных дней
-	-- название предидущей структуры
-	sad_name text := '';
 	
 BEGIN
-	for rec in 
-with 
+	return query
+	with 
+	
 	-- делаем таблицу с днями недели и их количеством
 	bk_days as (
 		select 
-			count(book_days)::integer as count_bk_days, extract(dow from book_days.book_days::timestamp)::integer as bk_day
-			from generate_series('2018-04-20'::date, '2018-04-29'::date, '1 day') as book_days
+			count( book_days )::integer as count_bk_days, extract( dow from book_days.book_days::date )::integer as bk_day
+			from generate_series(in_date, out_date - 1, '1 day') as book_days
 			group by bk_day
 	),
 	-- помещаем pax в таблицу
 	pax_data as ( 
 		select row_number() over ( order by pax_age desc ) as pax_id, pax_age, 
-			(to_date( '2018-04-30', 'YYYY-MM-DD' ) - to_date( '2018-04-20', 'YYYY-MM-DD' )) as rest_days,
-			(to_date( '2018-04-30', 'YYYY-MM-DD' ) - to_date( '2018-04-20', 'YYYY-MM-DD' )) as rest_nights
-			from unnest ( array[1,5,30,30] ) as pax_age order by pax_age desc 
+			(out_date - in_date) as rest_days,
+			(out_date - in_date) as rest_nights
+			from unnest ( ages ) as pax_age order by pax_age desc 
 	),
 	-- cross join c ccon чтобы получить данные о группировке pax  в adult, child, infant
 	ccon_pax as (
@@ -274,8 +259,7 @@ with
 			cn.standard_capacity,
 			cn.max_pax,
 			cn.max_children,						 
-			cn.is_price_per_pax as cnct_is_per_pax,
-		    
+			cn.is_price_per_pax as cnct_is_per_pax,		    
 			cn.cnct_id, cn.file_id, cn.hotel_code, cn.room_type, cn.characteristic, cn.base_board,
 			cngr.frees,
 			cngr.free_code,
@@ -341,132 +325,18 @@ with
 			
 	)
 
--- считаем скидки
+   select sad.* from sad;
 	
-    	select sad.* from sad
-	loop 
-		-- определяем количество дней, когда скидки действуют и не действуют
-		for dsk in select * from json_array_elements( rec.bk_days )
-		loop
-			-- если есть скидка за ночь, то выходим из цикла. Валидация была сделеано в запросе
-			if rec.application_type = any(array['T', 'U']) then
-				sad_days := 1;				
-				exit;
-			-- смотрим, есть ли дни недели в заказе (номера от 0 до 6 с ВС по СБ) среди разрешенных дней скидки 
-			elseif (dsk->>'bk_day')::integer = any(rec.week_days) then
-				sad_days := sad_days + (dsk->>'count_bk_day')::integer;
-			else
-				no_sad_days := no_sad_days + (dsk->>'count_bk_day')::integer;
-				--raise notice '%',  dsk->>'bk_day';
-			end if;
-			no_sad_days := rec.rest_nights - sad_days;
-		end loop;
-		
-		
-		sad_name := rec.sad_name;
-		-- считаем базовые цены на номер и завтрак 
-		if rec.sad_name = 'cnsr' then
-				
-				-- цена всех дней для сервиса или человека
-				sbp := rec.service_base_price * rec.rest_nights ;	
-				sbbp := rec.service_base_board_price * rec.rest_nights;
-				pbp := rec.pax_base_price * rec.rest_nights + pbp;
-				pbbp := rec.pax_base_board_price * rec.rest_nights + pbbp;
-				
-				--цена одного дня для сервиса или человека
-				sbp_1 := rec.service_base_price;	
-				sbbp_1 := rec.service_base_board_price;
-				pbp_1 := rec.pax_base_price + pbp_1;
-				pbbp_1 := rec.pax_base_board_price + pbbp_1;
-				
-				--continue;
-		elseif rec.sad_name = 'cnsu' then
-				
-				--	определяем количество дней со скидками и без скидок sad_days no_sad_days
-				
-				
-				if rec.type = 'N' then
-				raise notice '%', sbp;
-				raise notice '%', rec.cnct_id;
-					-- если скидка на базовую цену
-					if rec.application_type = any( array['B', 'N', 'T', 'U'] ) and rec.cnct_is_per_pax = 'Y' and rec.amount is not null then
-						pbp := pbp - pbp_1 / rec.paxes * sad_days  + ( pbp_1 / rec.paxes + rec.amount / rec.paxes ) * sad_days;
-						raise notice '%', 1;
-						
-					elseif rec.application_type = any( array['B', 'N', 'T', 'U'] ) and rec.cnct_is_per_pax = 'N' and rec.amount is not null then
-						sbp := sbp - sbp_1 / rec.standard_capacity * sad_days + ( sbp_1 / rec.standard_capacity + rec.amount / rec.paxes ) * sad_days;
-						raise notice '%', 2;
-					elseif rec.application_type = any( array['B', 'N', 'T', 'U'] ) and rec.cnct_is_per_pax = 'Y' and rec.percentage is not null then
-						pbp := pbp - pbp_1 / rec.paxes * sad_days + ( pbp_1 / rec.paxes + rec.percentage / 100 * pbp_1 / rec.paxes ) * sad_days;
-						raise notice '%', 3;
-					elseif rec.application_type = any( array['B', 'N', 'T', 'U'] ) and rec.cnct_is_per_pax = 'N' and rec.percentage is not null then
-						sbp := sbp - sbp_1 / rec.standard_capacity * sad_days  + ( sbp_1 / rec.standard_capacity + rec.percentage / 100 * sbp_1 / rec.standard_capacity ) * sad_days;
-						raise notice '%', 4;
-					end if;
-					
-					-- если скидка на базовую цену на завтрак
-					if rec.application_type = any( array['R', 'N', 'T', 'U'] ) and rec.cnsr_is_per_pax = 'Y' and rec.amount is not null then
-						pbbp := pbbp - pbbp_1 / rec.paxes * sad_days  + ( pbbp_1 / rec.paxes + rec.amount / rec.paxes ) * sad_days;
-						raise notice '%', 5;
-					elseif rec.application_type = any( array['R', 'N', 'T', 'U'] ) and rec.cnsr_is_per_pax = 'N' and rec.amount is not null then
-						sbbp := sbbp - sbbp_1 / rec.standard_capacity * sad_days + ( sbbp_1 / rec.standard_capacity + rec.amount / rec.paxes ) * sad_days;
-						raise notice '%', 6;
-					elseif rec.application_type = any( array['R', 'N', 'T', 'U'] ) and rec.cnsr_is_per_pax = 'Y' and rec.percentage is not null then
-						pbbp := pbbp - pbbp_1 / rec.paxes * sad_days + ( pbbp_1 / rec.paxes + rec.percentage / 100 * pbbp_1 / rec.paxes ) * sad_days;
-						raise notice '%', 7;
-					elseif rec.application_type = any( array['R', 'N', 'T', 'U'] ) and rec.cnsr_is_per_pax = 'N' and rec.percentage is not null then
-						sbbp := sbbp - sbbp_1 / rec.standard_capacity * sad_days  + ( sbbp_1 / rec.standard_capacity + rec.percentage / 100 * sbbp_1 / rec.standard_capacity ) * sad_days ;
-						raise notice '%', 8;
-					end if;
-					
-					-- абсолютная скидка на базовую цену. Завтрак остается без изменений???
-					if rec.application_type = 'A' and rec.cnct_is_per_pax = 'Y' and rec.amount is not null then
-						pbp := pbp - pbp_1 / rec.paxes * sad_days + rec.amount / rec.paxes * sad_days;
-						--raise notice '%', pbp;
-					elseif rec.application_type = 'A' and rec.cnct_is_per_pax = 'N' and rec.amount is not null then
-						sbp := sbp - sbp_1 / rec.standard_capacity * sad_days + rec.amount / rec.paxes * sad_days;					
-					end if;
-					
-					-- aбсолютная скидка на базовую цену, но к ней над прибавить базовую цену на завтрак. Сам завтрак остается без изменений???
-					if rec.application_type = 'M' and rec.cnct_is_per_pax = 'Y' and rec.cnsr_is_per_pax = 'N'
-						and rec.amount is not null then
-							pbp := pbp - pbp_1 / rec.paxes * sad_days + ( rec.amount / rec.paxes + pbbp_1 / rec.paxes ) * sad_days;
-								raise notice '%', pbp;
-					elseif rec.application_type = 'M' and rec.cnct_is_per_pax = 'Y' and rec.cnsr_is_per_pax = 'Y'
-						and rec.amount is not null 	then
-							pbp := pbp - pbp_1 / rec.paxes * sad_days + ( rec.amount / rec.paxes + sbbp_1 ) * sad_days;
-					elseif rec.application_type = 'M' and rec.cnct_is_per_pax = 'N' and rec.cnsr_is_per_pax = 'N'
-						and rec.amount is not null then
-							sbp := sbp - pbp_1 / rec.standard_capacity * sad_days + 
-								( rec.amount / rec.paxes + sbbp_1 / rec.standard_capacity ) * sad_days ;
-					elseif rec.application_type = 'M' and rec.cnct_is_per_pax = 'N' and rec.cnsr_is_per_pax = 'Y'
-						and rec.amount is not null 	then
-							sbp := sbp - pbp_1 / rec.standard_capacity * sad_days + 
-								( rec.amount / rec.paxes + pbbp_1 ) * sad_days ;
-					end if;
-				end if;
-					
-			 
-			
-		end if;
-		--rec.service_base_price = sbp;
-		rec.service_base_board_price = sbbp;
-		rec.pax_base_price = pbp;
-		rec.pax_base_board_price = pbbp;
-		--raise notice '%', rec.sad_name ;
-		return next rec;
-		
-	end loop;
-    return;
 END;
 $$ LANGUAGE plpgsql;
 
-select * from hbd_sad_calc();
+select * from _hbd_sad_list('2018-04-20'::date, '2018-04-30'::date, 1,5,30,30);
 
 --SELECT * FROM tmp_table;
 	
 
 	
+
 
 
 
