@@ -1,0 +1,23 @@
+WITH 
+	nights AS (SELECT DATE_PART('day', '2018-08-26'::timestamp - '2018-08-20'::timestamp)::int AS v)
+	
+	, query AS (SELECT fc.*, upper(fc.date_interval * daterange('2018-08-20', '2018-08-26', '[)')) - lower(fc.date_interval * daterange('2018-08-20', '2018-08-26', '[)')) AS nights, (upper(fc.date_interval * daterange('2018-08-20', '2018-08-26', '[)')) - lower(fc.date_interval * daterange('2018-08-20', '2018-08-26', '[)')))::int * adult_price AS total_adult_price, (upper(fc.date_interval * daterange('2018-08-20', '2018-08-26', '[)')) - lower(fc.date_interval * daterange('2018-08-20', '2018-08-26', '[)')))::int * child_price AS total_child_price FROM fast_caches_170704 AS fc WHERE NOT ISEMPTY(fc.date_interval * daterange('2018-08-20', '2018-08-26', '[)')) AND fc.min_nights<=(SELECT v FROM nights) AND fc.supplier_id=5)
+	
+	, q0 AS (SELECT (0 + row_number() OVER ()) as id, sum(nights) as sum_nights, 
+			country_code,city_code,main_hotel_code,hotel_code,file_id,accommodation_type,pq.room_type,meal_type,currency_code,supplier_hotel_id,
+			pq.hotel_id,room_type_id,meal_type_id,meal_type_name,room_type_name,sum(total_adult_price) AS adult_price, 
+			sum(child_price) AS child_price,'2|0'::text as p0 , standatd_capacity, max_pax, 
+			FROM query as pq 
+				JOIN hbd_room_type AS rt 
+					ON pq.hotel_code::int=rt.hotel_id AND 2>=rt.min_pax AND 2<=rt.max_pax AND 2>=rt.min_adults AND 2<=rt.max_adult AND 0<=rt.max_children GROUP BY country_code,city_code,main_hotel_code,hotel_code,file_id,accommodation_type,pq.room_type,meal_type,currency_code,supplier_hotel_id,pq.hotel_id,room_type_id,meal_type_id,meal_type_name,room_type_name)
+	
+	, pre_rooms as (SELECT q0.id as i0, p0, q0.supplier_hotel_id as h, q0.currency_code as c FROM q0 WHERE true AND q0.sum_nights>=(SELECT v FROM nights))
+	
+	, uni AS (SELECT * FROM q0)
+	
+	, rooms AS (SELECT DISTINCT ARRAY[p0] AS p, ARRAY[first_value(i0) OVER(partition by ARRAY(SELECT unnest(ARRAY[i0]) ORDER BY 1))] AS r, h, c FROM pre_rooms)
+	
+	, dirty_rooms AS (SELECT DISTINCT q.* FROM uni AS q JOIN rooms r ON q.id = ANY(r.r) ORDER BY q.id)
+	
+	
+  SELECT * from dirty_rooms limit 100;

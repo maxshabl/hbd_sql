@@ -1,0 +1,55 @@
+-- Table: public.hbd_sad
+
+DROP TABLE public.hbd_sad cascade;
+
+CREATE TABLE public.hbd_sad
+(
+    sad_name text COLLATE pg_catalog."default",
+    rest_days integer,
+    rest_nights integer,
+    paxes bigint,
+    adults bigint,
+    childes bigint,
+    infants bigint,
+    standard_capacity integer,
+    max_pax integer,
+    max_children integer,
+    cnct_is_per_pax character varying COLLATE pg_catalog."default",
+    cnsr_is_per_pax character varying COLLATE pg_catalog."default",
+    cnct_id character varying COLLATE pg_catalog."default",
+    file_id character varying COLLATE pg_catalog."default",
+    hotel_code character varying COLLATE pg_catalog."default",
+    room_type character varying COLLATE pg_catalog."default",
+    characteristic character varying COLLATE pg_catalog."default",
+    base_board character varying COLLATE pg_catalog."default",
+    week_day integer[],
+    bk_days json,
+    service_base_price numeric,
+    pax_base_price numeric,
+    service_base_board_price numeric,
+    pax_base_board_price numeric,
+    sad_code character varying COLLATE pg_catalog."default",
+    "order" integer,
+    type character varying COLLATE pg_catalog."default",
+    application_type character varying COLLATE pg_catalog."default",
+    amount numeric,
+    percentage numeric,
+    cnsu_is_per_pax character varying COLLATE pg_catalog."default",
+	cnsu_is_cumulative character varying COLLATE pg_catalog."default",
+    frees integer,
+    discount numeric,
+    application_base_type text COLLATE pg_catalog."default",
+    application_board_type text COLLATE pg_catalog."default",
+    application_discount_type text COLLATE pg_catalog."default",
+    application_stay_type text COLLATE pg_catalog."default",
+	cnoe_code1 varchar[],
+	cnoe json,
+	rt_sad varchar[]
+)
+WITH (
+    OIDS = FALSE
+)
+TABLESPACE pg_default;
+
+ALTER TABLE public.hbd_sad
+    OWNER to oex_dev;

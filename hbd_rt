@@ -1,0 +1,42 @@
+drop table if exists hbd_room_type ;
+create table hbd_room_type  as
+with 
+-- названием номера состоит из имени типа + характеристики
+-- получаем уникальные имена типов комнат
+	rt_titles as (
+		select dic.room_type, upper( dic.rt_title ) as rt_title from hbd_rt_dic dic
+		group by dic.room_type, dic.rt_title	
+	),
+-- получаем все типы размещений с description
+	cnha_descr as (
+		select 
+			md5( cnha.file_id || ':' || cnha.room_type || ':' || cnha.characteristic ) as rt_id, 
+			cnha.file_id, cnha.hotel_id, cnha.room_type, cnha.characteristic, 
+			cnha.standard_capacity, cnha.min_pax, cnha.max_pax, cnha.max_adult, cnha.max_children, cnha.max_infant, cnha.min_adults, cnha.min_children,
+		case
+			when dic.title is null then rt.rt_title
+			else dic.title
+		end as description
+		--count(*)
+		from public.hbd_cnha cnha
+			left join hbd_rt_dic dic 
+				on dic.room_type = cnha.room_type and dic.characteristic = cnha.characteristic
+			left join rt_titles as rt 
+				on rt.room_type = cnha.room_type
+			
+	),
+	cnha_accomodation as (
+		select 
+			cnha.*,
+			mrt."nameEn" as onex_accomodation_type
+		from cnha_descr as cnha
+		left join msql_room_type as mrt 
+				ON cnha.description LIKE  upper(mrt."nameEn") ||  '%'
+				
+	)
+	
+	select * from cnha_accomodation cnha;
+	
+	
+	
+	

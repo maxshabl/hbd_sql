@@ -1,7 +1,7 @@
 
-drop function if exists hbd_search(date, date, integer[]); 
+drop function if exists hbd_xp_search(date, date, integer[]); 
 
-CREATE FUNCTION hbd_search(in_date date, out_date date , variadic ages integer[]) 
+CREATE FUNCTION hbd_xp_search(in_date date, out_date date , variadic ages integer[]) 
 	RETURNS  table (
 		cnct_id varchar, file_id varchar, room_type varchar, characteristic varchar, board varchar, 
 		sbprice numeric, sbbprice numeric, pbprice numeric, pbbprice numeric, total_price numeric
@@ -41,7 +41,7 @@ DECLARE
 	
 
 BEGIN
-	perform _hbd_sad_list( in_date, out_date, 1, 5, 30, 30 );
+	perform _xp_hbd_sad_list( in_date, out_date, 1, 5, 30, 30 );
 	--RAISE EXCEPTION 'Нет рейсов на дату: %.', $1;
 	for rec in  select * from _hbd_sad_list -- получаем отсортированный список скидок и считаем в цикле
 	loop
@@ -240,7 +240,7 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-select * from hbd_search('2018-04-20'::date, '2018-04-30'::date, 1,5,30,30);
+select * from hbd_xp_search('2018-08-20'::date, '2018-08-30'::date, 30,30);
 
 --SELECT * FROM tmp_table;
 	

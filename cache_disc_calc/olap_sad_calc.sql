@@ -1,0 +1,1 @@
+truncate hbd_api_csv

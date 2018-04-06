@@ -1,0 +1,31 @@
+drop table if exists hbd_dirty cascade;
+create table hbd_dirty as 
+	select 
+		cnct.file_id,
+		md5 ( cnct.file_id || '.' || cnct.room_type || '.' || cnct.characteristic ) as rt_id
+		hs."supplierCountryCode" as country_code, 
+		hs."supplierCityCode" as city_code, 
+		ccon.hotel_code::int as hotel_code, 
+		cnct.room_type||'.'||cnct.characteristic as room_type,  
+		cnct.base_board ||'-'|| ccon.company_code as meal_type, 
+		daterange(cnct.initial_date + cnct.days, cnct.initial_date + cnct.days + 1, '[)') as date_interval,
+		ccon.currency as currency_code, 
+		0 as adult_price, 
+		0 as child_price,
+		cast(cnct.amount as double precision),
+		cnct.is_price_per_pax,
+		case
+			when cnem.minimum_days is null or cnem.minimum_days = 0 then 0
+			else cnem.minimum_days - 1
+		end as min_nights,		
+		numrange(ccon.minimum_child_age::int, ccon.maximum_child_age::int, '[]') as childe_ages
+	from hbd_cnct as cnct 
+	inner join hbd_ccon as ccon 
+		ON cnct.file_id=ccon.file_id
+	inner join msql_hotel_supplier hs on hs."supplierHotelCode" = ccon.hotel_code and hs."supplierId" = 5
+	inner join hbd_cnem as cnem on cnem.file_id = cnct.file_id and cnem.room_type = cnct.room_type and cnem.characteristic = cnct.characteristic;
+	--where ccon.minimum_child_age > 0
+	--limit 50000
+	
+ALTER TABLE hbd_dirty
+    OWNER to oex_dev;

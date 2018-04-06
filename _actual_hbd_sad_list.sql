@@ -1,7 +1,7 @@
 
-drop function if exists _hbd_sad_list(date, date, integer[]); 
-
-CREATE FUNCTION _hbd_sad_list(in_date date, out_date date , variadic ages integer[]) 
+drop function if exists _xp_hbd_sad_list(date, date, integer[]); 
+ 
+CREATE FUNCTION _xp_hbd_sad_list(in_date date, out_date date , variadic ages integer[]) 
 	--RETURNS setof hbd_sad AS $$
 	RETURNS void AS $$
 DECLARE
@@ -30,7 +30,7 @@ BEGIN
 		select row_number() over ( order by pax_age desc ) as pax_id, pax_age, 
 			( out_date - in_date ) as rest_days,
 			( out_date - in_date ) as rest_nights
-			from unnest ( ages ) as pax_age order by pax_age desc 
+			from unnest ( array[30, 30] ) as pax_age order by pax_age desc 
 	),
 	-- cross join c ccon чтобы получить данные о группировке pax  в adult, child, infant
 	ccon_pax as (
@@ -81,33 +81,38 @@ BEGIN
 				pax.file_id = child.file_id and pax.pax_id = child.pax_id											 
 			left join ccon_infant infant on 
 				pax.file_id = infant.file_id and pax.pax_id = child.pax_id
-			where pax.file_id = '436_138726_M_F'
+			--where pax.file_id = '436_138726_M_F'
 			
-	),
-	
-	pre_cnct as (
-		select count(cnct_id), cnct_id, file_id, room_type, characteristic, base_board, is_price_per_pax, sum(amount) as amount
-			from hbd_cnct2 as cnct
-			where ( DATE '2018-04-20',  DATE '2018-04-30' ) overlaps ( cnct.initial_date, cnct.final_date ) and cnct.file_id = '436_138726_M_F'
-			group by cnct_id, file_id, room_type, characteristic, base_board, is_price_per_pax
-			
-			having count(cnct_id) = (EXTRACT(EPOCH FROM timestamptz '2018-04-30') - EXTRACT(EPOCH FROM timestamptz '2018-04-20')) / 60 / 60 / 24
-	),
-	
-
+	)
+	----------------------------------------------------------	
+	, nights AS (SELECT DATE_PART('day', '2018-08-26'::timestamp - '2018-08-20'::timestamp)::int AS v)
+	, query AS (SELECT fc.*, upper(fc.date_interval * daterange('2018-08-20', '2018-08-26', '[)')) - lower(fc.date_interval * daterange('2018-08-20', '2018-08-26', '[)')) AS nights, (upper(fc.date_interval * daterange('2018-08-20', '2018-08-26', '[)')) - lower(fc.date_interval * daterange('2018-08-20', '2018-08-26', '[)')))::int * adult_price AS total_adult_price, (upper(fc.date_interval * daterange('2018-08-20', '2018-08-26', '[)')) - lower(fc.date_interval * daterange('2018-08-20', '2018-08-26', '[)')))::int * child_price AS total_child_price FROM fast_caches_170704 AS fc WHERE NOT ISEMPTY(fc.date_interval * daterange('2018-08-20', '2018-08-26', '[)')) AND fc.min_nights<=(SELECT v FROM nights) AND fc.supplier_id=5)
+	, q0 AS (SELECT (0 + row_number() OVER ()) as id, sum(nights) as sum_nights, country_code,city_code,main_hotel_code,hotel_code,accommodation_type,pq.room_type, file_id, meal_type,currency_code,supplier_hotel_id,pq.hotel_id,room_type_id,meal_type_id,meal_type_name,room_type_name,sum(total_adult_price) AS adult_price, sum(child_price) AS child_price,'2|0'::text as p0 FROM query as pq JOIN hbd_room_type AS rt ON pq.hotel_code::int=rt.hotel_id AND 2>=rt.min_pax AND 2<=rt.max_pax AND 2>=rt.min_adult AND 2<=rt.max_adult AND 0<=rt.max_children GROUP BY country_code,city_code,main_hotel_code,hotel_code,accommodation_type,pq.room_type,file_id,meal_type,currency_code,supplier_hotel_id,pq.hotel_id,room_type_id,meal_type_id,meal_type_name,room_type_name)
+	, pre_rooms as (SELECT q0.id as i0, p0, q0.supplier_hotel_id as h, q0.currency_code as c FROM q0 WHERE true AND q0.sum_nights>=(SELECT v FROM nights))
+	, uni AS (SELECT * FROM q0)
+	, rooms AS (SELECT DISTINCT ARRAY[p0] AS p, ARRAY[first_value(i0) OVER(partition by ARRAY(SELECT unnest(ARRAY[i0]) ORDER BY 1))] AS r, h, c FROM pre_rooms)
+	, dirty_rooms AS (SELECT DISTINCT md5( q.file_id || '.' || q.room_type ) as cnct_id, q.* FROM uni AS q JOIN rooms r ON q.id = ANY(r.r) ORDER BY q.id)
+	----------------------------------------------------------
+	,
 	cnct as (
 		select 
 			ccon.*,
-			cnct.cnct_id, cnct.room_type, cnct.characteristic, cnct.base_board, cnct.is_price_per_pax, cnct.amount,			
+			/*cnct.cnct_id, 
+			cnha.room_type, 
+			cnha.characteristic,
+			cnct.meal_type as base_board, 
+			cipp.is_per_pax as is_price_per_pax,
+			cnct.adult_price as amount,			
 			cnha.standard_capacity,
 			cnha.max_pax,
-			cnha.max_children
-			from pre_cnct as cnct 
-			inner join ccon on ccon.file_id = cnct.file_id
+			cnha.max_children*/
+			from dirty_rooms as cnct 
+			--inner join hbd_cnct_is_per_pax cipp on md5( cipp.file_id || '.' || cipp.room_type  || '.' || cipp.characteristic ) = cnct.cnct_id
+			inner join ccon on ccon.file_id = cnct.file_id			
 			inner join hbd_cnha as cnha 
-				on cnha.file_id = cnct.file_id and cnha.room_type = cnct.room_type and cnha.characteristic = cnct.characteristic  -- присоединяем структуру с параметрами размещения, отбрасывая то, что не подходит по парамерам вместимости						
-					and cnha.max_pax >= ccon.paxes and cnha.max_children >= ccon.childes
-			order by cnct_id, room_type, characteristic
+				on cnha.file_id = cnct.file_id and cnct.cnct_id = md5( cnha.file_id || '.' || cnha.room_type  || '.' || cnha.characteristic )  -- присоединяем структуру с параметрами размещения, отбрасывая то, что не подходит по парамерам вместимости						
+					--and cnha.max_pax >= ccon.paxes and cnha.max_children >= ccon.childes
+			order by cnct.cnct_id, cnha.room_type, cnha.characteristic
 			
 	),
 	-- считаем базовую цену + базовую цену на завтраки 
@@ -185,7 +190,7 @@ BEGIN
 					and ( cnsr.room_type = cnct.room_type or cnsr.room_type is null )  
 					and ( cnsr.characteristic = cnct.characteristic or cnsr.characteristic is null ) 
 					and ( ( cnsr.min_age is null and cnsr.min_age is null ) or ( cnsr.min_age <= cnct.age  and cnsr.max_age >= cnct.age ) ) 
-					and ( DATE '2018-04-20',  DATE '2018-04-30' ) overlaps ( cnsr.initial_date, cnsr.final_date )
+					and ( in_date,  out_date ) overlaps ( cnsr.initial_date, cnsr.final_date )
 			
 			--group by cnct.file_id, cnct.room_type, cnct.characteristic, cnct.amount 
 			
@@ -228,7 +233,7 @@ BEGIN
 				on cnsu.file_id = cn.file_id 
 					and ( cnsu.room_type = cn.room_type or cnsu.room_type is null ) and ( cnsu.characteristic = cn.characteristic or cnsu.characteristic is null  ) 
 					and ( cnsu.board = cn.base_board  or cnsu.board is null )  
-					and ( DATE '2018-04-20',  DATE '2018-04-30' ) overlaps ( cnsu.initial_date, cnsu.final_date )
+					and ( in_date,  out_date ) overlaps ( cnsu.initial_date, cnsu.final_date )
 					and ( cnsu.application_initial_date is null or cnsu.application_initial_date::timestamp < now() ) 
 					and ( cnsu.application_final_date is null or cnsu.application_final_date::timestamp > now()) 
 					and ( cnsu.adults is null or cnsu.adults <= cn.adults) 
@@ -312,7 +317,7 @@ BEGIN
 			cnct_is_per_pax, '', cnct_id,  
 			file_id, hotel_code, room_type,	characteristic, base_board, week_days, (select json_agg(bk_days.*) from bk_days) as bk_days,
 			0, 0,  0, 0, -- поля после расчетов от cnsr
-			sad_code, "order", "type", application_type, amount, percentage, cnsu_is_per_pax, cnsu_is_cumulative, 
+			sad_code, case when "order" is null then 0 else "order" end, "type", application_type, amount, percentage, cnsu_is_per_pax, cnsu_is_cumulative, 
 			0,0,'','','','', -- поля cngr
 			( select cnoe.code1 from cnoe where cnoe.file_id = cnsu.file_id ) as cnoe_code1,
 			( select cnoe.cnoe from cnoe where cnoe.file_id = cnsu.file_id ) as cnoe
@@ -337,8 +342,7 @@ BEGIN
 		select sl.*,  array_agg( sad_code ) over ( partition by cnct_id ) sad_list from sad_list as sl
 	)
 	
-
-   select sad.* from sad;
+	select sad.* from sad;
 	-- удаляем несовместимые скидки is_included = 'Y', или скидки, которые применяются только парами cnoe.is_included = 'N' и у них нет пары  
 	delete from _hbd_sad_list 
 	where ( sad_code || ':' || cnct_id ) in 
@@ -351,7 +355,7 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-select _hbd_sad_list( '2018-04-20'::date, '2018-04-30'::date, 1, 5, 30, 30 );
+select _xp_hbd_sad_list( '2018-08-20'::date, '2018-08-26'::date, 30, 30 );
 --select * from _hbd_sad_list;
 	
 	select * from _hbd_sad_list
