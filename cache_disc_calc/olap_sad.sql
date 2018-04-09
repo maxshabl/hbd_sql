@@ -34,7 +34,7 @@ with
 			group by  file_id, rt_id, country_code, contract_number, contract_name, city_code, hotel_code, room_type, characteristic, board, meal_type, currency_code, is_price_per_pax, min_nights, childe_ages, standard_capacity, min_pax, max_pax, max_adult, max_children, max_infant, min_adult, min_children
 	),
 	
-	--фильтруем по ночам, замножаем на количество pax-ов, чтоб потом применять к ним скидки и наценки
+	--фильтруем по ночам, и добавляем данные для поиска
 	rt_q2 as (
 		select 
 				file_id, rt_id, country_code, contract_number, contract_name, city_code, hotel_code, room_type, characteristic, board, meal_type, currency_code, is_price_per_pax, min_nights, childe_ages, standard_capacity, min_pax, max_pax, max_adult, max_children, max_infant, min_adult, min_children, pax_age,	amount,			
@@ -51,57 +51,79 @@ with
 
 	), 
 	sad as (
-		select rt.file_id, rt.rt_id, rt.country_code, rt.contract_number, rt.contract_name, rt.city_code, rt.hotel_code, rt.room_type, rt.characteristic,  
-			rt.is_price_per_pax as rt_is_per_pax, cnsr.is_per_pax as cnsr_is_per_pax, rt.adults, rt.childs, rt.infants,
-			case when cnsr.board_code is null then json_agg(0)
-				else json_agg( cnsr.amount )
-			end as cnsr_amount,
-			case when cnsr.board_code is null then  json_agg(0)
-				else json_agg( cnsr.percentage )
-			end as cnsr_percentage,
-			/*case when cnsr.board_code is null then rt.board
-				else cnsr.board_code
-			end board,*/
-			rt.board, cnsr.board_code
-			--jsonb_object_agg( 'type', cnsu.type ),
-			--cnsu.type, cnsu.application_type
-			--cnsu.type
+		select 
+			rt.file_id, rt.rt_id, rt.country_code, rt.contract_number, rt.contract_name, rt.city_code, rt.hotel_code, rt.room_type, rt.characteristic,rt.childe_ages, rt.standard_capacity, rt.min_pax, rt.max_pax, rt.max_adult, rt.max_children, rt.max_infant, rt.min_adult, rt.min_children, rt.pax_age,
+			rt.is_price_per_pax, rt.is_price_per_pax rt_is_per_pax, rt.amount rt_amount, rt.adults, rt.childs, rt.infants,
+											
+			rt.board, cnsr.board_code, cnsr.amount as cnsr_amount, cnsr.percentage as cnsr_percentage,
+											
+			cnsu.type, cnsu.application_type, cnsu.amount, cnsu.percentage,
+			grouping(rt.board, cnsr.board_code, cnsr.amount, cnsr.percentage)::bit(4) as gr
+			
 			from rt_q2 rt
 				left join hbd_cnsr as cnsr on cnsr.file_id = rt.file_id and ( cnsr.room_type = rt.room_type or cnsr.room_type = '' )
 					and ( cnsr.characteristic = rt.characteristic or cnsr.characteristic = '' )
 					and ( ( cnsr.min_age is null and cnsr.min_age is null ) or ( cnsr.min_age <= rt.pax_age  and cnsr.max_age >= rt.pax_age ) ) 
 					and ( DATE '2018-08-20',  DATE '2018-08-26' ) overlaps ( cnsr.initial_date, cnsr.final_date )
-				/*left join hbd_cnsu as cnsu on cnsu.file_id = rt.file_id and ( cnsu.room_type = rt.room_type or cnsu.room_type = '' )
+				left join hbd_cnsu as cnsu on cnsu.file_id = rt.file_id and ( cnsu.room_type = rt.room_type or cnsu.room_type = '' )
 					and ( cnsu.characteristic = rt.characteristic or cnsu.characteristic = '' )
 					and ( DATE '2018-08-20',  DATE '2018-08-26' ) overlaps ( cnsu.initial_date, cnsu.final_date )
 					and ( cnsu.application_initial_date is null or cnsu.application_initial_date::timestamp < now() ) 
-					and ( cnsu.application_final_date is null or cnsu.application_final_date::timestamp > now()) 
-					and ( cnsu.adults is null or cnsu.adults <= rt.adults) 
+					and ( cnsu.application_final_date is null or cnsu.application_final_date::timestamp > now() ) 
+					and ( cnsu.adults is null or cnsu.adults <= rt.adults ) 
 					and case
 							when cnsu.type in ('N', 'F') 
 								then  cnsu.pax_order = rt.childs and cnsu.min_age <= rt.pax_age and cnsu.min_age <= rt.pax_age								
 							when cnsu.type = 'C' 
 								then  rt.standard_capacity < ( rt.adults + rt.childs )
 							else true
-						end	*/
+						end	
 											
-		where rt.board is not null and rt.file_id = '1_100539_M_F' 
-		group by rt.file_id, rt.rt_id, rt.country_code, rt.contract_number, rt.contract_name, rt.city_code, rt.hotel_code, rt.room_type, rt.characteristic, rt.board, rt.is_price_per_pax, cnsr.is_per_pax,
-			rt.standard_capacity, rt.adults, rt.childs, rt.infants,
-			-- cnsu.order,cnsu.type, cnsu.application_type,
-			grouping sets ( cnsr.board_code, rt.board)
-		
+		where rt.board is not null and rt.file_id = '1_100539_M_F'
+		group by 
+			rt.file_id, rt.rt_id, rt.country_code, rt.contract_number, rt.contract_name, rt.city_code, rt.hotel_code, rt.room_type, rt.characteristic,rt.childe_ages, rt.standard_capacity, rt.min_pax, rt.max_pax, rt.max_adult, rt.max_children, rt.max_infant, rt.min_adult, rt.min_children, rt.pax_age,
+			rt.is_price_per_pax, rt.is_price_per_pax, rt.amount, rt.adults, rt.childs, rt.infants, cnsu.type, cnsu.application_type, cnsu.amount, cnsu.percentage,
+			--cnsu.type, cnsu.application_type, cnsu.amount, cnsu.percentage,
+			/*rt.file_id, rt.rt_id, rt.country_code, rt.contract_number, rt.contract_name, rt.city_code, rt.hotel_code, rt.room_type, rt.characteristic,
+			rt.childe_ages, rt.standard_capacity, rt.min_pax, rt.max_pax, rt.max_adult, rt.max_children, rt.max_infant, rt.min_adult, rt.min_children, rt.pax_age,
+			rt.is_price_per_pax, rt.amount, rt.adults, rt.childs, rt.infants, rt.board, 
+			
+			cnsr.board_code, cnsr.is_per_pax, cnsr.amount, cnsr.percentage,*/
+			--cnsu.type, cnsu.application_type, cnsu.amount, cnsu.percentage,
+			grouping sets (
+				(
+					rt.file_id, rt.rt_id, rt.country_code, rt.contract_number, rt.contract_name, rt.room_type, rt.characteristic, rt.board, rt.city_code, rt.childe_ages, rt.hotel_code, rt.is_price_per_pax, rt.amount, rt.adults, rt.childs, rt.infants  
+				),
+				(
+					cnsr.board_code, cnsr.is_per_pax, cnsr.amount, cnsr.percentage
+				),
+				(
+					cnsu.type, cnsu.application_type, cnsu.amount, cnsu.percentage
+				)
+			)
+		order by rt.room_type, rt.characteristic, rt.board, cnsu.type, cnsu.application_type, cnsu.amount, cnsu.percentage
 	),
-	
 	-- данные из запроса api
-	hbd_api as  ( 
+	hbd_api as ( 
 		select   req_id, destination_code, hotel_id,  company_code,  contract_number, contract_name, classification, check_in, check_out, adults, room_type, characteristic, board,  currency, cancelation, promotions, fees, child_age_from, child_age_to,  amount, min_pax, max_pax, min_adult, max_adult, max_child, max_infant
 		from hbd_api_csv 
 		group by req_id, destination_code, hotel_id,  company_code,  contract_number, contract_name, classification, check_in, check_out, adults, room_type, characteristic, board,  currency, cancelation, promotions, fees, child_age_from, child_age_to,  amount, min_pax, max_pax, min_adult, max_adult, max_child, max_infant
 
 	)
 	
-	select * from sad limit 100
+		
+	select 
+		* 
+	from sad where gr = '0111' or gr = '1000'
+	
+	/*select  rt.file_id, rt.rt_id, rt.country_code, rt.contract_number, rt.contract_name, rt.city_code, rt.hotel_code, rt.room_type, rt.characteristic,
+			rt.childe_ages, rt.standard_capacity, rt.min_pax, rt.max_pax, rt.max_adult, rt.max_children, rt.max_infant, rt.min_adult, rt.min_children, rt.pax_age,
+			rt.adults, rt.childs, rt.infants
+	from sad_g rt  
+	group by rt.file_id, rt.rt_id, rt.country_code, rt.contract_number, rt.contract_name, rt.city_code, rt.hotel_code, rt.room_type, rt.characteristic,
+			rt.childe_ages, rt.standard_capacity, rt.min_pax, rt.max_pax, rt.max_adult, rt.max_children, rt.max_infant, rt.min_adult, rt.min_children, rt.pax_age,
+			rt.adults, rt.childs, rt.infants
+	order by room_type, characteristic limit 100*/
 	
 	--select * from hbd_api where contract_number='100539'
 	--select * from cnsr_q q 
