@@ -37,7 +37,7 @@ with
 	--фильтруем по ночам, и добавляем данные для поиска
 	rt_q2 as (
 		select 
-				file_id, rt_id, country_code, contract_number, contract_name, city_code, hotel_code, room_type, characteristic, specific_rate, generic_rate, board, meal_type, currency_code, is_price_per_pax, min_nights, childe_ages, standard_capacity, min_pax, max_pax, max_adult, max_children, max_infant, min_adult, min_children, pax_age,	amount,			
+				file_id, pax_id, pax_age, rt_id, country_code, contract_number, contract_name, city_code, hotel_code, room_type, characteristic, specific_rate, generic_rate, board, meal_type, currency_code, is_price_per_pax, min_nights, childe_ages, standard_capacity, min_pax, max_pax, max_adult, max_children, max_infant, min_adult, min_children, amount,			
 				case
 					when specific_rate is null then generic_rate
 					else specific_rate
@@ -50,27 +50,28 @@ with
 			from rt_q1 as rt 
 				cross join paxes px
 			where sum_nights>=(select v from nights) 
-			group by  file_id, rt_id, country_code, contract_number, contract_name, city_code, hotel_code, room_type, characteristic, specific_rate, generic_rate, board, meal_type, currency_code, is_price_per_pax, min_nights, childe_ages, standard_capacity, min_pax, max_pax, max_adult, max_children, max_infant, min_adult, min_children, pax_age, amount
+			--group by  file_id, rt_id, country_code, contract_number, contract_name, city_code, hotel_code, room_type, characteristic, specific_rate, generic_rate, board, meal_type, currency_code, is_price_per_pax, min_nights, childe_ages, standard_capacity, min_pax, max_pax, max_adult, max_children, max_infant, min_adult, min_children, pax_age, amount
 
 
 	), 
 	sad as (
 		select 
-			rt.file_id, rt.rt_id, rt.country_code, rt.contract_number, rt.contract_name, rt.city_code, rt.hotel_code, 
+			pax_id, rt.file_id, rt.rt_id, rt.country_code, rt.contract_number, rt.contract_name, rt.city_code, rt.hotel_code, 
 			rt.room_type, rt.characteristic, rt.rate, rt.childe_ages, rt.standard_capacity, rt.min_pax, rt.max_pax, rt.max_adult, rt.max_children, rt.max_infant, rt.min_adult, rt.min_children, rt.pax_age,
 			rt.is_price_per_pax, rt.is_price_per_pax rt_is_per_pax, rt.amount as rt_amount, rt.adults, rt.childs, rt.infants,
-								
+			
+			json_agg( json_build_object( 'cnsr_amount', cnsr.amount::double precision, 'cnsr_percentage', cnsr.percentage::double precision ) ),					
 			case
 				when rt.board is null then cnsr.board_code
 				else rt.board
 			end as board,
-			cnsr.amount as cnsr_amount, cnsr.percentage as cnsr_percentage,
+			/*cnsr.amount as cnsr_amount, cnsr.percentage as cnsr_percentage,*/ cnsr.is_per_pax as cnsr_is_per_pax,
 											
 			cnsu.type, cnsu.application_type, cnsu.amount, cnsu.percentage,
 											
 			cngr.frees, cngr.free_code,	cngr.discount, cngr.application_base_type, cngr.application_board_type,	cngr.application_discount_type,	cngr.application_stay_type,
 			
-			grouping(rt.board, cnsr.board_code, cnsr.amount, cnsr.percentage)::bit(4) as gr,
+			--grouping(rt.board, cnsr.board_code, cnsr.amount, cnsr.percentage)::bit(4) as gr,
 											
 			cnem.minimum_days, cnem.maximum_days
 			
@@ -111,6 +112,8 @@ with
 		group by 
 			rt.file_id, rt.rt_id, rt.country_code, rt.contract_number, rt.contract_name, rt.city_code, rt.hotel_code, rt.room_type, rt.characteristic, rt.rate, rt.childe_ages, rt.standard_capacity, rt.min_pax, rt.max_pax, rt.max_adult, rt.max_children, rt.max_infant, rt.min_adult, rt.min_children, rt.pax_age,
 			rt.is_price_per_pax, rt.is_price_per_pax, rt.amount, rt.adults, rt.childs, rt.infants, cnsu.type, cnsu.application_type, cnsu.amount, cnsu.percentage,
+			rt.board, cnsr.board_code,
+			cnsr.is_per_pax,
 			--cnsu.type, cnsu.application_type, cnsu.amount, cnsu.percentage,
 			cngr.frees, cngr.free_code,	cngr.discount, cngr.application_base_type, cngr.application_board_type,	cngr.application_discount_type,	cngr.application_stay_type,
 			cnem.minimum_days, cnem.maximum_days,
@@ -119,7 +122,7 @@ with
 				    rt.file_id, rt.rt_id, rt.country_code, rt.contract_number, rt.contract_name, rt.room_type, rt.characteristic,rt.rate, rt.board, rt.city_code, rt.childe_ages, rt.hotel_code, rt.is_price_per_pax, rt.amount, rt.adults, rt.childs, rt.infants  
 				),
 				(
-					cnsr.board_code, cnsr.is_per_pax, cnsr.amount, cnsr.percentage
+					cnsr.board_code, cnsr.is_per_pax, cnsr.amount, cnsr.percentage, cnsr.is_per_pax
 				)
 			)
 		order by rt.room_type, rt.characteristic, rt.board, cnsu.type, cnsu.application_type, cnsu.amount, cnsu.percentage
@@ -135,27 +138,38 @@ with
 	sad_g as (
 		select 
 		  rt.file_id, rt.rt_id, rt.country_code, rt.contract_number, rt.contract_name, rt.city_code, rt.hotel_code, rt.room_type, rt.characteristic, rt.board, rt.childe_ages, rt.standard_capacity, rt.min_pax, rt.max_pax, rt.max_adult, rt.max_children, rt.max_infant, rt.min_adult, rt.min_children, 
-		rt.pax_age,	rt.is_price_per_pax, rt.is_price_per_pax, rt_is_per_pax, rt_amount, rt.adults, rt.childs, rt.infants, 											
-		  cnsr_amount, cnsr_percentage, minimum_days, maximum_days
+		  rt.pax_age,	 rt_is_per_pax, rt_amount, rt.adults, rt.childs, rt.infants--, array_agg( coalesce( cnsr_amount, 0 ) ) as cnsr_amount, 											
+		  --array_agg( coalesce( cnsr_percentage, 0 ) )as cnsr_percentage ,
+		cnsr_is_per_pax, minimum_days, maximum_days
 		
 	from sad rt
 	where board is not null and ( rt.minimum_days is null or rt.minimum_days <= ( select v from nights ) ) and ( rt.maximum_days is null or rt.maximum_days >= ( select v from nights ) ) -- and minimum_days is not null or maximum_days is not null
 	group by  rt.file_id, rt.rt_id, rt.country_code, rt.contract_number, rt.contract_name, rt.city_code, rt.hotel_code, rt.room_type, rt.characteristic, rt.board, rt.childe_ages, rt.standard_capacity, rt.min_pax, rt.max_pax, rt.max_adult, rt.max_children, rt.max_infant, rt.min_adult, rt.min_children, 
-		rt.pax_age,	rt.is_price_per_pax, rt.is_price_per_pax, rt_is_per_pax, rt_amount, rt.adults, rt.childs, rt.infants, 											
-		 cnsr_amount, cnsr_percentage, minimum_days, maximum_days
+		rt.pax_age,	rt_is_per_pax,  rt_amount, rt.adults, rt.childs, rt.infants, 											
+		 cnsr_is_per_pax, minimum_days, maximum_days
 	)
 	
-	--select count(*) from sad_g 
+	--select rt_amount, rt_is_per_pax::varchar, array[cnsr_amount::double precision, cnsr_percentage::double precision ], cnsr_is_per_pax::varchar from sad_g 
+
+
+	select 
+		
+		/*hbd_sad_calc( to_json( array[30,30] ), rt_amount, rt_is_per_pax::varchar, 
+			json_build_object( 'cnsr_amount', cnsr_amount::double precision, 'cnsr_percentage', cnsr_percentage::double precision ), cnsr_is_per_pax::varchar  
+		),*/
+		*
+						
+	from sad
 	--order by room_type, characteristic, board
 	--where file_id = '1_100535_M_F'	limit 100
 	-- смотри задвоения	
-	select  
+	/*select  
 		 file_id, rt.contract_number,rt.contract_name,rt.room_type,rt.characteristic, rt.board
 	from sad_g rt
 		left join hbd_api ha on ha.contract_number = rt.contract_number::text and ha.contract_name = rt.contract_name and ha.room_type = rt.room_type and ha.characteristic = rt.characteristic and ha.board = rt.board
-	where ha.contract_number is null
-	--group by file_id, rt.contract_number,rt.contract_name,rt.room_type,rt.characteristic, rt.board
-	--having count(file_id) > 1
+	--where ha.contract_number is null --and file_id = '1_100539_M_F'
+	group by file_id, rt.contract_number,rt.contract_name,rt.room_type,rt.characteristic, rt.board
+	having count(file_id) > 1*/
 	--group by file_id, hotel_code,   contract_number, contract_name, rt.room_type, rt.characteristic, rt.board
 	
 	
