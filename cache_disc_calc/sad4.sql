@@ -45,8 +45,10 @@ with
 	--фильтруем по ночам, и добавляем данные для поиска
 	rt_q2 as (
 		select 
-			file_id,  rt_id, country_code, contract_number, contract_name, city_code, hotel_code, room_type, characteristic,  board, meal_type, currency_code, is_price_per_pax, 
-			min_nights, childe_ages, standard_capacity, min_pax, max_pax, max_adult, max_children, max_infant, min_adult, min_children, amount,	
+			file_id,  rt_id, country_code, contract_number, contract_name, city_code, hotel_code, room_type, characteristic,  board, 
+			meal_type, currency_code, is_price_per_pax, min_nights, childe_ages, standard_capacity,
+			min_pax, max_pax, max_adult, max_children, max_infant, min_adult, min_children, amount,	
+			count(cnsr_amount) as cnsr_count, 
 			json_agg( json_build_object( 'cnsr_amount', cnsr_amount, 'cnsr_percentage', cnsr_percentage, 'cnsr_is_per_pax', cnsr_is_per_pax ) )::text as cnsr_board,
 			coalesce( array_length( array( select age from unnest( array[30,30] ) as age where age <@ childe_ages ), 1 ), 0 ) as childs,
 			( array( select age from unnest( array[30,30] ) as age where age <@ childe_ages ) ) as child_ages,											
@@ -55,12 +57,14 @@ with
 			coalesce( array_length( array( select age from unnest( array[30,30] ) as age where age > upper( childe_ages ) ), 1 ), 0 ) as adults
 		from rt_q1 as rt 
 			cross join paxes px
-		where sum_nights>=( select v from nights ) and ( isempty(cnsr_pax_ages) or (pax_age <@ cnsr_pax_ages) )
-		group by  file_id, rt_id, country_code, contract_number, contract_name, city_code, hotel_code, room_type, characteristic,  board, meal_type, currency_code, is_price_per_pax, min_nights, childe_ages, standard_capacity, min_pax, max_pax, max_adult, max_children, max_infant, min_adult, min_children,amount
-			--having count(file_id) != 2
+		where sum_nights>=( select v from nights ) and ( isempty(cnsr_pax_ages ) or ( pax_age <@ cnsr_pax_ages ) )
+		group by file_id, rt_id, country_code, contract_number, contract_name, city_code, hotel_code, room_type, characteristic, board, 
+				meal_type, currency_code, is_price_per_pax, min_nights, childe_ages, standard_capacity, 
+				min_pax, max_pax, max_adult, max_children, max_infant, min_adult, min_children, amount
+			--having count( cnsr_amount ) != 2
 
 	),
-	sad as (
+	/*sad as (
 		select
 			json_agg( json_build_object( 
 				'type', cnsu.type, 'application_type', cnsu.application_type, 'amount', cnsu.amount, 'percentage', cnsu.percentage, 'order', cnsu."order", 'is_cumulative', cnsu.is_cumulative,
@@ -107,7 +111,7 @@ with
 				rt.min_nights, rt.childe_ages, rt.standard_capacity, rt.min_pax, rt.max_pax, rt.max_adult, rt.max_children,rt. max_infant, rt.min_adult, rt.min_children, rt.amount,
 				rt.cnsr_board, rt.childs, rt.child_ages, rt.infants, rt.infant_ages, rt.adults
 											
-	),
+	),*/
 	-- данные из запроса api
 	hbd_api as ( 
 		select   req_id, destination_code, hotel_id,  company_code,  contract_number, contract_name, classification, check_in, check_out, adults, room_type, characteristic, board,  currency, cancelation, promotions, fees, child_age_from, child_age_to,  amount, min_pax, max_pax, min_adult, max_adult, max_child, max_infant
@@ -117,8 +121,9 @@ with
 
 	)
 	
-	--select rt_amount, rt_is_per_pax::varchar, array[cnsr_amount::double precision, cnsr_percentage::double precision ], cnsr_is_per_pax::varchar from sad_g 
-	select  
+	--select count(*) from rt_q2
+	
+	/*select  
 		hbd_sad_calc( 
 			to_json( array[30, 30] ),
 			rt.standard_capacity::int
@@ -133,7 +138,7 @@ with
 		),
 	from sad 
 		left join hbd_cnoe as cnoe on cnoe.file_id = rt.file_id
-	limit 100
+	limit 100*/
 
 	
 	--
@@ -141,12 +146,13 @@ with
 	--where file_id = '1_100535_M_F'	limit 100
 	-- смотри задвоения	
 	/*select  
-		 file_id, rt.contract_number,rt.contract_name,rt.room_type,rt.characteristic, rt.board
-	from sad_q2 rt
+		 file_id, rt.contract_number,rt.contract_name,rt.room_type,rt.characteristic, rt.board, ha.contract_name
+	from rt_q2 rt
 		left join hbd_api ha on ha.contract_number = rt.contract_number::text and ha.contract_name = rt.contract_name and ha.room_type = rt.room_type and ha.characteristic = rt.characteristic and ha.board = rt.board
-	--where ha.contract_number is null --and file_id = '1_100539_M_F'
-	group by file_id, rt.contract_number,rt.contract_name,rt.room_type,rt.characteristic, rt.board
-	having count(file_id) > 1*/
+	 where ha.contract_number is null --and file_id = '1_100539_M_F'
+	order by file_id*/
+	--group by file_id, rt.contract_number,rt.contract_name,rt.room_type,rt.characteristic, rt.board
+	---having count(file_id) > 1
 	--group by file_id, hotel_code,   contract_number, contract_name, rt.room_type, rt.characteristic, rt.board
 	
 	

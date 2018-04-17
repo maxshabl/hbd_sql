@@ -1,8 +1,8 @@
 ----------------------------- заполняем hbd_dirty -----------------------------------------------
-alter table hbd_cnct
-	add column date_interval daterange ;
+--alter table hbd_cnct
+--	add column date_interval daterange ;
 	
-update hbd_cnct set date_interval = daterange( initial_date + days, initial_date + days + 1, '[)' );
+--update hbd_cnct set date_interval = daterange( initial_date + days, initial_date + days + 1, '[)' );
 
 drop table if exists hbd_dirty cascade ;
 create table hbd_dirty as 
@@ -44,7 +44,7 @@ create table hbd_dirty as
 		cnha.max_infant,
 		cnha.min_adult,
 		cnha.min_children,
-	 	int4range( 0, 0, '[]' ) as cnsr_pax_ages
+	 	int4range( 0, 0, '()' ) as cnsr_pax_ages
 	from hbd_cnct as cnct 
 	inner join hbd_ccon as ccon 
 		ON cnct.file_id=ccon.file_id
@@ -104,9 +104,9 @@ create table hbd_dirty as
 	--and cnsr.initial_date::timestamp <= cnct.initial_date::timestamp and cnsr.final_date::timestamp >= cnct.final_date::timestamp
 	and	case
 			when cnct.generic_rate is not null then
-				cnsr.rate = cnct.generic_rate or cnsr.rate is null 
-			else 
-				cnsr.rate = cnct.specific_rate or cnsr.rate is null  
+				cnsr.rate = cnct.generic_rate
+			when  cnct.specific_rate != '0' then
+				cnsr.rate = cnct.specific_rate 
 		end 
 	 where cnsr.board_code is not null
 	);
